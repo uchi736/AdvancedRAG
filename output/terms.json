@@ -1,171 +1,72 @@
 {
   "terms": [
     {
-      "headword": "ハーモナイゼーション",
-      "synonyms": [
-        "調和"
-      ],
-      "definition": "異なるシステムや基準を統一することで、相互運用性や効率性を向上させること。医薬品規制においては、国際的な基準の統一を指すことが多い。",
-      "category": "医薬品規制"
-    },
-    {
       "headword": "ハーモナイゼーション推進",
-      "synonyms": [],
-      "definition": "医薬品規制における国際的な基準の統一を促進すること。",
-      "category": "医薬品規制"
-    },
-    {
-      "headword": "規制調和国際会議",
+      "definition": "医薬品承認審査資料の国際的な調和を促進する取り組み。",
       "synonyms": [
-        "ICH"
+        "ハーモナイゼーション"
       ],
-      "definition": "医薬品規制の国際的な調和を目的とした国際会議。",
       "category": "医薬品規制"
-    },
-    {
-      "headword": "製造販売承認申請",
-      "synonyms": [],
-      "definition": "医薬品を製造販売するために、厚生労働省に提出する申請。",
-      "category": "医薬品規制"
-    },
-    {
-      "headword": "試験ガイドライン",
-      "synonyms": [
-        "ガイドライン"
-      ],
-      "definition": "医薬品開発や試験における手順や基準を定めた指針。",
-      "category": "医薬品開発"
     },
     {
       "headword": "二段階発がんモデル",
+      "definition": "発がんの初期段階と促進段階を評価するための試験モデル。",
       "synonyms": [
-        "段階発がんモデル",
-        "発がんモデル"
+        "段階発がんモデル"
       ],
-      "definition": "発がん過程を2段階（開始と促進）に分けて評価する実験モデル。",
-      "category": "発がん試験"
+      "category": "毒性試験"
     },
     {
       "headword": "短期代替発がん試験",
+      "definition": "長期試験の代替として短期間で発がん性を評価する試験。",
       "synonyms": [
-        "短期代替発がん",
-        "代替発がん試験"
+        "代替発がん試験",
+        "短期代替"
       ],
-      "definition": "長期がん原性試験に代わる、より短期間で発がん性を評価する試験。",
-      "category": "発がん試験"
+      "category": "毒性試験"
     },
     {
-      "headword": "トランスジェニックマウス",
+      "headword": "規制調和国際会議",
+      "definition": "医薬品規制の国際的調和を目的とした会議（ICH）。",
       "synonyms": [
-        "トランスジェニッ"
+        "ICH",
+        "調和国際会議"
       ],
-      "definition": "特定の遺伝子を導入したマウス。発がん研究などに用いられる。",
-      "category": "実験動物"
-    },
-    {
-      "headword": "長期発がん試験",
-      "synonyms": [
-        "長期がん原性試験",
-        "長期がん"
-      ],
-      "definition": "動物を用いて、長期間にわたって発がん性を評価する試験。",
-      "category": "発がん試験"
+      "category": "医薬品規制"
     },
     {
       "headword": "旧ガイドライン",
+      "definition": "平成20年に定められた医薬品のがん原性試験に関するガイドライン。",
       "synonyms": [],
-      "definition": "改正前の医薬品のがん原性試験に関するガイドライン。",
+      "category": "医薬品規制"
+    },
+    {
+      "headword": "新ガイドライン",
+      "definition": "ICH合意に基づき改訂された医薬品のがん原性試験に関するガイドライン。",
+      "synonyms": [],
       "category": "医薬品規制"
     },
     {
       "headword": "Weight of Evidence",
+      "definition": "複数の証拠を総合的に評価するアプローチ。",
       "synonyms": [
-        "重み付け"
+        "証拠の重み付け"
       ],
-      "definition": "複数の証拠を総合的に評価し、結論を導き出す手法。医薬品のがん原性評価において、様々な試験結果の重み付けを行う際に用いられる。",
-      "category": "リスク評価"
+      "category": "毒性評価"
     },
     {
-      "headword": "リスク評価",
-      "synonyms": [],
-      "definition": "医薬品などの有害事象発生の可能性とその程度を評価すること。",
-      "category": "医薬品開発"
-    },
-    {
-      "headword": "薬物動態",
-      "synonyms": [],
-      "definition": "薬物が体内でどのように吸収、分布、代謝、排泄されるかを研究する分野。",
-      "category": "薬理学"
-    },
-    {
-      "headword": "性評価戦略",
+      "headword": "rasH2-Tgマウス",
+      "definition": "発がん性試験に用いられるトランスジェニックマウスの一種。",
       "synonyms": [
-        "評価戦略"
+        "トランスジェニックマウス"
       ],
-      "definition": "医薬品のがん原性を評価するための計画。",
-      "category": "医薬品開発"
+      "category": "毒性試験"
     },
     {
-      "headword": "rasH2",
-      "synonyms": [
-        "rasH"
-      ],
-      "definition": "発がんに関与する遺伝子の一つ。",
-      "category": "遺伝子"
-    },
-    {
-      "headword": "ガイダンス",
+      "headword": "薬物動態学的指標",
+      "definition": "薬物の体内動態を評価するための指標。",
       "synonyms": [],
-      "definition": "指針、助言。",
-      "category": "医薬品規制"
-    },
-    {
-      "headword": "Part2",
-      "synonyms": [],
-      "definition": "ICHガイドライン「医薬品のがん原性を検出するための試験に関するガイダンス」の補遺の第二部。",
-      "category": "医薬品規制"
-    },
-    {
-      "headword": "承認審査資料",
-      "synonyms": [
-        "申請資料",
-        "審査資料"
-      ],
-      "definition": "医薬品承認申請に添付する資料。",
-      "category": "医薬品規制"
-    },
-    {
-      "headword": "当該試験",
-      "synonyms": [],
-      "definition": "関係する試験。",
-      "category": "医薬品開発"
-    },
-    {
-      "headword": "当該評価資料",
-      "synonyms": [],
-      "definition": "関係する評価資料。",
-      "category": "医薬品開発"
-    },
-    {
-      "headword": "アプローチ",
-      "synonyms": [],
-      "definition": "問題解決のための方法、考え方。",
-      "category": "医薬品開発"
-    },
-    {
-      "headword": "独立行政法人医薬品医療機器総合機構",
-      "synonyms": [
-        "独立行政法人医薬",
-        "独立行政法人",
-        "医薬品医療機器総合機構",
-        "医療機器総合機構",
-        "機器総合機構",
-        "総合機構",
-        "機構理事",
-        "総合機構理事"
-      ],
-      "definition": "医薬品や医療機器の審査、承認などを担当する日本の独立行政法人。",
-      "category": "医薬品規制"
+      "category": "薬物動態"
     }
   ]
 }

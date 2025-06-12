@@ -4,10 +4,10 @@ LCEL記法版 専門用語・類義語辞書生成（SudachiPy + RAG統合版）
 ------------------------------------------------
 * LangChain Expression Language (LCEL) でチェイン構築
 * SudachiPyとN-gramによる候補語生成の前処理を追加
-* Google Embedding APIとPGVectorによるRAG実装
+* Azure OpenAI APIとPGVectorによるRAG実装
 * LangSmithによる処理トレース対応
 * 構造化出力 (Pydantic) で型安全性確保
-* `.env` から `GOOGLE_API_KEY` と `PG_URL` 読み込み
+* `.env` から Azure OpenAI設定 と `PG_URL` 読み込み
 """
 
 from __future__ import annotations
@@ -26,19 +26,23 @@ from pydantic import BaseModel, Field
 from sudachipy import tokenizer, dictionary
 from sqlalchemy import create_engine, text
 
+# --- Project-specific imports ---
+# 親ディレクトリをパスに追加してragモジュールをインポート
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+from rag.config import Config
+
 # ── ENV ───────────────────────────────────────────
 load_dotenv()
-API_KEY = os.getenv("GOOGLE_API_KEY")
-PG_URL = os.getenv("PG_URL")
-JARGON_TABLE_NAME = os.getenv("JARGON_TABLE_NAME", "jargon_dictionary")
+cfg = Config()
 
-if not API_KEY:
-    sys.exit("[ERROR] .env に GOOGLE_API_KEY を設定してください")
-if not PG_URL:
-    sys.exit("[ERROR] .env に PG_URL を設定してください")
+PG_URL = f"postgresql+psycopg://{cfg.db_user}:{cfg.db_password}@{cfg.db_host}:{cfg.db_port}/{cfg.db_name}"
+JARGON_TABLE_NAME = cfg.jargon_table_name
+
+if not all([cfg.azure_openai_api_key, cfg.azure_openai_endpoint, cfg.azure_openai_chat_deployment_name, cfg.azure_openai_embedding_deployment_name]):
+    sys.exit("[ERROR] .env にAzure OpenAIの関連設定が不足しています。")
 
 # ── LangChain imports ─────────────────────────────
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings
 from langchain_community.document_loaders import (
     PyPDFLoader,
     UnstructuredFileLoader,
@@ -70,10 +74,11 @@ if os.getenv("LANGCHAIN_TRACING_V2", "").lower() == "true":
 sudachi_mode = tokenizer.Tokenizer.SplitMode.A
 
 # ── Embeddings Setup ──────────────────────────────
-embeddings = GoogleGenerativeAIEmbeddings(
-    model="models/text-embedding-004",
-    google_api_key=API_KEY,
-    task_type="RETRIEVAL_DOCUMENT"
+embeddings = AzureOpenAIEmbeddings(
+    azure_endpoint=cfg.azure_openai_endpoint,
+    api_key=cfg.azure_openai_api_key,
+    api_version=cfg.azure_openai_api_version,
+    azure_deployment=cfg.azure_openai_embedding_deployment_name
 )
 
 # ── Vector Store Components ──────────────────────
@@ -88,14 +93,13 @@ class VectorStore:
     def _sync_initialize(self, chunks: List[str], chunk_ids: List[str]):
         """同期的にPGVectorを初期化"""
         logger.info(f"Initializing PGVector with {len(chunks)} chunks...")
-        # 既存のコレクションをクリアする代わりに、新しいデータで上書きする
         self.vector_store = PGVector.from_texts(
             texts=chunks,
             embedding=embeddings,
             collection_name=self.collection_name,
             ids=chunk_ids,
             connection_string=self.connection_string,
-            pre_delete_collection=True, # コレクションを再作成
+            pre_delete_collection=True,
         )
         logger.info("PGVector initialized successfully.")
 
@@ -111,22 +115,17 @@ class VectorStore:
             return "関連情報なし"
         
         try:
-            # 類似チャンクを検索
             results_with_scores = await self.vector_store.asimilarity_search_with_score(
                 query=query_text,
-                k=n_results + 1 # 自分自身が含まれる可能性があるため+1
+                k=n_results + 1
             )
             
             related_contexts = []
             for doc, score in results_with_scores:
-                # 自分自身のチャンクはスキップ
                 if doc.metadata.get("id") == current_chunk_id:
                     continue
-                
-                # 類似度が閾値以上のもののみ使用（スコアが高いほど類似）
-                if score > 0.7:  # 閾値は調整可能
+                if score > 0.7:
                     related_contexts.append(f"[関連文脈 (類似度: {score:.2f})]\n{doc.page_content}")
-                
                 if len(related_contexts) >= n_results:
                     break
             
@@ -152,10 +151,12 @@ class TermList(BaseModel):
     terms: List[Term] = Field(default_factory=list, description="専門用語のリスト")
 
 # ── LLM Setup ─────────────────────────────────────
-llm = ChatGoogleGenerativeAI(
-    model="gemini-1.5-flash",
+llm = AzureChatOpenAI(
+    azure_endpoint=cfg.azure_openai_endpoint,
+    api_key=cfg.azure_openai_api_key,
+    api_version=cfg.azure_openai_api_version,
+    azure_deployment=cfg.azure_openai_chat_deployment_name,
     temperature=0.1,
-    google_api_key=API_KEY,
 )
 
 # ── Output Parser ─────────────────────────────────
