@@ -2,6 +2,7 @@
 =======================================================
 チャット画面はChatGPT風、その他は洗練されたモダンデザイン
 用語辞書タブを追加 (Added Term Dictionary Tab)
+Golden-Retriever機能を追加 (Added Golden-Retriever Feature)
 
 起動: streamlit run streamlit_rag_ui_hybrid.py
 (Launch: streamlit run streamlit_rag_ui_hybrid.py)
@@ -56,10 +57,12 @@ ENV_DEFAULTS = {
     "LLM_MODEL_IDENTIFIER": os.getenv("LLM_MODEL_IDENTIFIER", "gpt-4o"),
     "COLLECTION_NAME": os.getenv("COLLECTION_NAME", "documents"),
     "FINAL_K": int(os.getenv("FINAL_K", 5)),
+    "ENABLE_JARGON_EXTRACTION": os.getenv("ENABLE_JARGON_EXTRACTION", "true").lower() == "true",
 }
 
 # PostgreSQL URL for term dictionary
 PG_URL = os.getenv("PG_URL", "")
+JARGON_TABLE_NAME = os.getenv("JARGON_TABLE_NAME", "jargon_dictionary")
 
 # ── RAG System Import ─────────────────────────────────────────────────────
 try:
@@ -166,7 +169,7 @@ st.markdown("""
         line-height: 1.5;
         margin-bottom: 0.5rem;
     }
-    .term-synonyms {
+    .term-meta {
         color: var(--text-secondary);
         font-size: 0.875rem;
     }
@@ -358,11 +361,11 @@ def load_terms_from_db(keyword: str = "") -> pd.DataFrame:
         
         # テーブルの存在確認
         with engine.connect() as conn:
-            check_table = text("""
+            check_table = text(f"""
                 SELECT EXISTS (
                     SELECT FROM information_schema.tables 
                     WHERE table_schema = 'public' 
-                    AND table_name = 'term_dictionary'
+                    AND table_name = '{JARGON_TABLE_NAME}'
                 );
             """)
             table_exists = conn.execute(check_table).scalar()
@@ -372,30 +375,30 @@ def load_terms_from_db(keyword: str = "") -> pd.DataFrame:
         
         # 用語データの取得
         if keyword:
-            query = """
-                SELECT term, synonyms, definition, sources, created_at
-                FROM term_dictionary
+            query = f"""
+                SELECT term, definition, domain, aliases, related_terms, confidence_score, updated_at
+                FROM {JARGON_TABLE_NAME}
                 WHERE term ILIKE :keyword 
                    OR definition ILIKE :keyword
                    OR EXISTS (
-                       SELECT 1 FROM unnest(synonyms) AS s 
+                       SELECT 1 FROM unnest(aliases) AS s 
                        WHERE s ILIKE :keyword
                    )
                 ORDER BY term
             """
             params = {"keyword": f"%{keyword}%"}
         else:
-            query = """
-                SELECT term, synonyms, definition, sources, created_at
-                FROM term_dictionary
+            query = f"""
+                SELECT term, definition, domain, aliases, related_terms, confidence_score, updated_at
+                FROM {JARGON_TABLE_NAME}
                 ORDER BY term
             """
             params = {}
         
         df = pd.read_sql(query, engine, params=params)
         
-        if not df.empty and "created_at" in df.columns:
-            df["created_at"] = pd.to_datetime(df["created_at"]).dt.strftime("%Y-%m-%d %H:%M")
+        if not df.empty and "updated_at" in df.columns:
+            df["updated_at"] = pd.to_datetime(df["updated_at"]).dt.strftime("%Y-%m-%d %H:%M")
         
         return df
         
@@ -409,12 +412,15 @@ def render_term_card(term_data: pd.Series):
     <div class="term-card">
         <div class="term-headword">{term_data['term']}</div>
         <div class="term-definition">{term_data['definition']}</div>
-        <div class="term-synonyms">
-            <strong>類義語:</strong> {', '.join(term_data['synonyms']) if term_data['synonyms'] else 'なし'}
+        <div class="term-meta">
+            <strong>分野:</strong> {term_data.get('domain', 'N/A')} | 
+            <strong>信頼度:</strong> {term_data.get('confidence_score', 1.0):.2f}
         </div>
-        <div class="term-sources">
-            <strong>出典:</strong> {', '.join([Path(s).name for s in term_data['sources'][:3]]) if term_data['sources'] else 'なし'}
-            {f' 他{len(term_data["sources"])-3}件' if term_data['sources'] and len(term_data['sources']) > 3 else ''}
+        <div class="term-meta">
+            <strong>類義語:</strong> {', '.join(term_data['aliases']) if term_data['aliases'] else 'なし'}
+        </div>
+        <div class="term-meta">
+            <strong>関連語:</strong> {', '.join(term_data['related_terms']) if term_data['related_terms'] else 'なし'}
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -426,10 +432,14 @@ if "current_sources" not in st.session_state:
     st.session_state.current_sources = []
 if "last_query_expansion" not in st.session_state:
     st.session_state.last_query_expansion = {}
+if "last_golden_retriever" not in st.session_state:
+    st.session_state.last_golden_retriever = {}
 if "use_query_expansion" not in st.session_state:
     st.session_state.use_query_expansion = False
 if "use_rag_fusion" not in st.session_state:
     st.session_state.use_rag_fusion = False
+if "use_jargon_augmentation" not in st.session_state:
+    st.session_state.use_jargon_augmentation = ENV_DEFAULTS["ENABLE_JARGON_EXTRACTION"]
 if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())
 
@@ -447,7 +457,8 @@ if "rag_system" not in st.session_state:
                 llm_model_identifier=ENV_DEFAULTS["LLM_MODEL_IDENTIFIER"],
                 embedding_model_identifier=ENV_DEFAULTS["EMBEDDING_MODEL_IDENTIFIER"],
                 collection_name=ENV_DEFAULTS["COLLECTION_NAME"],
-                final_k=ENV_DEFAULTS["FINAL_K"]
+                final_k=ENV_DEFAULTS["FINAL_K"],
+                enable_jargon_extraction=st.session_state.use_jargon_augmentation
             )
             st.session_state.rag_system = initialize_rag_system(app_config)
             st.toast("✅ RAGシステムがAzure OpenAIで正常に初期化されました", icon="🎉")
@@ -624,11 +635,13 @@ with tab_chat:
             st.markdown('<div class="initial-input-container">', unsafe_allow_html=True)
 
             st.markdown("<h6>高度なRAG設定:</h6>", unsafe_allow_html=True)
-            opt_cols_initial = st.columns(2)
+            opt_cols_initial = st.columns(3)
             with opt_cols_initial[0]:
                 use_qe_initial = st.checkbox("クエリ拡張", value=st.session_state.use_query_expansion, key="use_qe_initial_v7_tab_chat", help="質問を自動的に拡張して検索 (RRFなし)")
             with opt_cols_initial[1]:
                 use_rf_initial = st.checkbox("RAG-Fusion", value=st.session_state.use_rag_fusion, key="use_rf_initial_v7_tab_chat", help="クエリ拡張とRRFで結果を統合")
+            with opt_cols_initial[2]:
+                use_ja_initial = st.checkbox("専門用語で補強", value=st.session_state.use_jargon_augmentation, key="use_ja_initial_v7_tab_chat", help="専門用語辞書を使って質問を補強")
 
             user_input_initial = st.text_area("質問を入力:", placeholder="例：このドキュメントの要約を教えてください / 売上上位10件を表示して", height=100, key="initial_input_textarea_v7_tab_chat", label_visibility="collapsed")
 
@@ -637,6 +650,8 @@ with tab_chat:
                     st.session_state.messages.append({"role": "user", "content": user_input_initial})
                     st.session_state.use_query_expansion = use_qe_initial
                     st.session_state.use_rag_fusion = use_rf_initial
+                    st.session_state.use_jargon_augmentation = use_ja_initial
+                    rag.config.enable_jargon_extraction = use_ja_initial
 
                     with st.spinner("考え中..."):
                         try:
@@ -648,6 +663,7 @@ with tab_chat:
                                     "user_query": user_input_initial,
                                     "use_query_expansion": st.session_state.use_query_expansion,
                                     "use_rag_fusion": st.session_state.use_rag_fusion,
+                                    "use_jargon_augmentation": st.session_state.use_jargon_augmentation,
                                     "query_source": "initial_input"
                                 }
                             )
@@ -678,6 +694,7 @@ with tab_chat:
                             st.session_state.messages.append(message_data)
                             st.session_state.current_sources = response.get("sources", [])
                             st.session_state.last_query_expansion = response.get("query_expansion", {})
+                            st.session_state.last_golden_retriever = response.get("golden_retriever", {})
                         except Exception as e:
                             st.error(f"チャット処理中にエラーが発生しました: {type(e).__name__} - {e}")
                     st.rerun()
@@ -699,11 +716,13 @@ with tab_chat:
 
                 st.markdown("---")
 
-                opt_cols_chat = st.columns(2)
+                opt_cols_chat = st.columns(3)
                 with opt_cols_chat[0]:
                     use_qe_chat = st.checkbox("クエリ拡張", value=st.session_state.use_query_expansion, key="use_qe_chat_continued_v7_tab_chat", help="クエリ拡張 (RRFなし)")
                 with opt_cols_chat[1]:
                     use_rf_chat = st.checkbox("RAG-Fusion", value=st.session_state.use_rag_fusion, key="use_rf_chat_continued_v7_tab_chat", help="RAG-Fusion (拡張+RRF)")
+                with opt_cols_chat[2]:
+                    use_ja_chat = st.checkbox("専門用語で補強", value=st.session_state.use_jargon_augmentation, key="use_ja_chat_continued_v7_tab_chat", help="専門用語辞書を使って質問を補強")
 
                 user_input_continued = st.text_area(
                     "メッセージを入力:",
@@ -717,6 +736,9 @@ with tab_chat:
                         st.session_state.messages.append({"role": "user", "content": user_input_continued})
                         st.session_state.use_query_expansion = use_qe_chat
                         st.session_state.use_rag_fusion = use_rf_chat
+                        st.session_state.use_jargon_augmentation = use_ja_chat
+                        rag.config.enable_jargon_extraction = use_ja_chat
+
                         with st.spinner("考え中..."):
                             try:
                                 trace_config_cont = RunnableConfig(
@@ -727,6 +749,7 @@ with tab_chat:
                                         "user_query": user_input_continued,
                                         "use_query_expansion": st.session_state.use_query_expansion,
                                         "use_rag_fusion": st.session_state.use_rag_fusion,
+                                        "use_jargon_augmentation": st.session_state.use_jargon_augmentation,
                                         "query_source": "continued_chat"
                                     }
                                 )
@@ -757,6 +780,7 @@ with tab_chat:
                                 st.session_state.messages.append(message_data_cont)
                                 st.session_state.current_sources = response.get("sources", [])
                                 st.session_state.last_query_expansion = response.get("query_expansion", {})
+                                st.session_state.last_golden_retriever = response.get("golden_retriever", {})
                             except Exception as e:
                                 st.error(f"チャット処理中にエラーが発生しました: {type(e).__name__} - {e}")
                         st.rerun()
@@ -767,10 +791,17 @@ with tab_chat:
                         st.session_state.messages = []
                         st.session_state.current_sources = []
                         st.session_state.last_query_expansion = {}
+                        st.session_state.last_golden_retriever = {}
                         st.rerun()
                 with info_col:
                     last_expansion = st.session_state.get("last_query_expansion", {})
-                    if last_expansion and last_expansion.get("used", False):
+                    last_golden = st.session_state.get("last_golden_retriever", {})
+                    
+                    if last_golden and last_golden.get("enabled"):
+                        with st.expander("⚜️ Golden-Retriever 詳細", expanded=False):
+                            st.write(f"**補強されたクエリ:** `{last_golden.get('augmented_query')}`")
+                            st.write(f"**抽出された専門用語:** `{', '.join(last_golden.get('extracted_terms', [])) or 'なし'}`")
+                    elif last_expansion and last_expansion.get("used", False):
                         with st.expander(f"📋 拡張クエリ詳細 ({last_expansion.get('strategy', 'N/A')})", expanded=False):
                             queries = last_expansion.get("queries", [])
                             st.caption("以下のクエリで検索しました（該当する場合）：")
@@ -841,14 +872,11 @@ with tab_dictionary:
             with col1:
                 st.metric("登録用語数", f"{len(terms_df):,}")
             with col2:
-                total_synonyms = sum(len(syn_list) if syn_list else 0 for syn_list in terms_df['synonyms'])
+                total_synonyms = sum(len(syn_list) if syn_list else 0 for syn_list in terms_df['aliases'])
                 st.metric("類義語総数", f"{total_synonyms:,}")
             with col3:
-                unique_sources = set()
-                for sources in terms_df['sources']:
-                    if sources:
-                        unique_sources.update(sources)
-                st.metric("参照文書数", f"{len(unique_sources):,}")
+                avg_confidence = terms_df['confidence_score'].mean()
+                st.metric("平均信頼度", f"{avg_confidence:.2f}")
             
             st.markdown("---")
             
@@ -868,15 +896,15 @@ with tab_dictionary:
                 # テーブル形式での表示
                 display_df = terms_df.copy()
                 # 配列を文字列に変換
-                display_df['synonyms'] = display_df['synonyms'].apply(
+                display_df['aliases'] = display_df['aliases'].apply(
                     lambda x: ', '.join(x) if x else ''
                 )
-                display_df['sources'] = display_df['sources'].apply(
-                    lambda x: ', '.join([Path(s).name for s in x[:2]]) + f' 他{len(x)-2}件' if x and len(x) > 2 else ', '.join([Path(s).name for s in x]) if x else ''
+                display_df['related_terms'] = display_df['related_terms'].apply(
+                    lambda x: ', '.join(x) if x else ''
                 )
                 
                 # カラム名を日本語に
-                display_df.columns = ['用語', '類義語', '定義', '出典', '登録日時']
+                display_df.columns = ['用語', '定義', '分野', '類義語', '関連語', '信頼度', '更新日時']
                 
                 st.dataframe(
                     display_df,
@@ -887,15 +915,14 @@ with tab_dictionary:
             
             # CSVダウンロード
             st.markdown("---")
-            if st.button("📥 用語辞書をCSVでダウンロード", key="download_terms_csv"):
-                csv = terms_df.to_csv(index=False)
-                st.download_button(
-                    label="💾 CSVファイルをダウンロード",
-                    data=csv,
-                    file_name=f"term_dictionary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    mime="text/csv",
-                    key="csv_download_button"
-                )
+            csv = terms_df.to_csv(index=False)
+            st.download_button(
+                label="📥 用語辞書をCSVでダウンロード",
+                data=csv,
+                file_name=f"jargon_dictionary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+                key="csv_download_button"
+            )
 
 # ── Tab 3: Data Management (SQL用テーブル) ───────────────────────────────────
 with tab_data:
@@ -966,3 +993,309 @@ with tab_data:
                             st.error(del_msg_text)
         else:
             st.info("分析可能なデータテーブルはまだありません。上記からファイルをアップロードしてください。")
+
+# ── Tab 4: Document Management ────────────────────────────────────────────
+with tab_documents:
+    if rag:
+        st.markdown("### 📤 ドキュメントアップロード")
+        uploaded_docs_list = st.file_uploader(
+            "ファイルを選択またはドラッグ&ドロップ (.pdf, .txt, .md, .docx, .doc)",
+            accept_multiple_files=True,
+            type=["pdf", "txt", "md", "docx", "doc"],
+            label_visibility="collapsed",
+            key=f"doc_uploader_v7_tab_documents_{rag.config.collection_name if rag else 'default'}"
+        )
+
+        if uploaded_docs_list:
+            st.markdown(f"#### 選択されたファイル ({len(uploaded_docs_list)})")
+            file_info_display_list = []
+            for file_item in uploaded_docs_list:
+                file_info_display_list.append({
+                    "ファイル名": file_item.name,
+                    "サイズ": f"{file_item.size / 1024:.1f} KB",
+                    "タイプ": file_item.type or "不明"
+                })
+            st.dataframe(pd.DataFrame(file_info_display_list), use_container_width=True, hide_index=True)
+
+            if st.button("🚀 ドキュメントを処理 (インジェスト)", type="primary", use_container_width=True, key="process_docs_button_v7_tab_documents"):
+                progress_bar_docs_ingest = st.progress(0, text="処理開始...")
+                status_text_docs_ingest = st.empty()
+                try:
+                    paths_to_ingest_list = []
+                    for i, file_item_to_ingest in enumerate(uploaded_docs_list):
+                        status_text_docs_ingest.info(f"一時保存中: {file_item_to_ingest.name}")
+                        paths_to_ingest_list.append(str(_persist_uploaded_file(file_item_to_ingest)))
+                        progress_bar_docs_ingest.progress((i + 1) / (len(uploaded_docs_list) * 2), text=f"一時保存完了: {file_item_to_ingest.name}")
+
+                    status_text_docs_ingest.info(f"インデックスを構築中... ({len(paths_to_ingest_list)}件のファイル)")
+                    rag.ingest_documents(paths_to_ingest_list)
+                    progress_bar_docs_ingest.progress(1.0, text="インジェスト完了！")
+                    st.success(f"✅ {len(uploaded_docs_list)}個のファイルが正常に処理されました！")
+                    time.sleep(1)
+                    st.balloons()
+                    st.rerun()
+                except Exception as e_ingest:
+                    st.error(f"ドキュメント処理中にエラーが発生しました: {type(e_ingest).__name__} - {e_ingest}")
+                finally:
+                    if 'progress_bar_docs_ingest' in locals(): progress_bar_docs_ingest.empty()
+                    if 'status_text_docs_ingest' in locals(): status_text_docs_ingest.empty()
+
+        st.markdown("### 📚 登録済みドキュメント")
+        docs_df_display = get_documents_dataframe(rag)
+        if not docs_df_display.empty:
+            st.dataframe(docs_df_display, use_container_width=True, hide_index=True)
+
+            st.markdown("### 🗑️ ドキュメント削除")
+            doc_ids_for_deletion_options = ["選択してください..."] + docs_df_display["Document ID"].tolist()
+            doc_to_delete_selected = st.selectbox(
+                "削除するドキュメントIDを選択:",
+                doc_ids_for_deletion_options,
+                label_visibility="collapsed",
+                key=f"doc_delete_selectbox_v7_tab_documents_{rag.config.collection_name if rag else 'default'}"
+            )
+            if doc_to_delete_selected != "選択してください...":
+                st.warning(f"**警告:** ドキュメント '{doc_to_delete_selected}' を削除すると、関連する全てのチャンクがデータベースとベクトルストアから削除されます。この操作は元に戻せません。")
+                if st.button(f"'{doc_to_delete_selected}' を削除実行", type="secondary", key="doc_delete_button_v7_tab_documents"):
+                    try:
+                        with st.spinner(f"削除中: {doc_to_delete_selected}"):
+                            success, message = rag.delete_document_by_id(doc_to_delete_selected)
+                        if success:
+                            st.success(message)
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error(message)
+                    except Exception as e_delete:
+                        st.error(f"ドキュメント削除中にエラーが発生しました: {type(e_delete).__name__} - {e_delete}")
+        else:
+            st.info("まだドキュメントが登録されていません。上のセクションからアップロードしてください。")
+    else:
+        st.info("RAGシステムが初期化されていません。サイドバーで設定を確認してください。")
+
+# ── Tab 5: Settings ───────────────────────────────────────────────────────
+with tab_settings:
+    st.markdown("### ⚙️ システム詳細設定")
+    st.caption("RAGシステムの詳細な設定を行います。変更後は「設定を適用」ボタンをクリックしてください。システムの再初期化が必要な場合があります。")
+
+    temp_default_cfg = Config()
+
+    current_values_dict: Dict[str, Any] = {}
+    if rag and hasattr(rag, 'config'):
+        current_values_dict = rag.config.__dict__.copy()
+    else:
+        current_values_dict = temp_default_cfg.__dict__.copy()
+        for key, value in ENV_DEFAULTS.items():
+            if key.lower() in current_values_dict:
+                 current_values_dict[key.lower()] = value
+            # Ensure openai_api_key is not carried over if it was in ENV_DEFAULTS
+            if key.lower() == "openai_api_key":
+                current_values_dict[key.lower()] = None
+
+    for key_from_class in temp_default_cfg.__dict__:
+        if key_from_class not in current_values_dict:
+            current_values_dict[key_from_class] = getattr(temp_default_cfg, key_from_class)
+        # Ensure openai_api_key is explicitly None if not already handled
+        if key_from_class == "openai_api_key":
+            current_values_dict[key_from_class] = None
+
+    with st.form("detailed_settings_form_v7_tab_settings"):
+        col1_settings, col2_settings = st.columns(2)
+        with col1_settings:
+            st.markdown("#### 🔑 Azure OpenAI 設定")
+            form_azure_openai_api_key = st.text_input(
+                "Azure OpenAI APIキー",
+                value=current_values_dict.get("azure_openai_api_key", "") or "",
+                type="password", key="setting_azure_key_v7",
+                help="Azure OpenAI APIキー。"
+            )
+            form_azure_openai_endpoint = st.text_input(
+                "Azure OpenAI エンドポイント",
+                value=current_values_dict.get("azure_openai_endpoint", "") or "",
+                key="setting_azure_endpoint_v7",
+                help="Azure OpenAI エンドポイント URL。"
+            )
+            form_azure_openai_api_version = st.text_input(
+                "Azure OpenAI APIバージョン",
+                value=current_values_dict.get("azure_openai_api_version", "") or "",
+                key="setting_azure_version_v7",
+                help="Azure OpenAI APIバージョン (例: 2024-02-01)。"
+            )
+            form_azure_chat_deployment = st.text_input(
+                "Azure チャットデプロイメント名",
+                value=current_values_dict.get("azure_openai_chat_deployment_name", "") or "",
+                key="setting_azure_chat_deploy_v7",
+                help="Azure OpenAI チャットモデルのデプロイメント名。"
+            )
+            form_azure_embedding_deployment = st.text_input(
+                "Azure 埋め込みデプロイメント名",
+                value=current_values_dict.get("azure_openai_embedding_deployment_name", "") or "",
+                key="setting_azure_embed_deploy_v7",
+                help="Azure OpenAI 埋め込みモデルのデプロイメント名。"
+            )
+            
+            st.markdown("#### 🤖 AIモデル識別子 (UI用)")
+            emb_opts_form = ["text-embedding-ada-002", "text-embedding-3-small", "text-embedding-3-large"]
+            current_emb_model_id_form = current_values_dict.get("embedding_model_identifier", temp_default_cfg.embedding_model_identifier)
+            emb_idx_form = emb_opts_form.index(current_emb_model_id_form) if current_emb_model_id_form in emb_opts_form else 0
+            embedding_model_id_form_val = st.selectbox("埋め込みモデル識別子", emb_opts_form, index=emb_idx_form, help="埋め込みモデルのUI表示用識別子", key="setting_emb_model_id_v7")
+
+            llm_opts_form = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo", "gpt-3.5-turbo-16k"]
+            current_llm_model_id_form = current_values_dict.get("llm_model_identifier", temp_default_cfg.llm_model_identifier)
+            llm_idx_form = llm_opts_form.index(current_llm_model_id_form) if current_llm_model_id_form in llm_opts_form else 0
+            llm_model_id_form_val = st.selectbox("言語モデル識別子", llm_opts_form, index=llm_idx_form, help="言語モデルのUI表示用識別子", key="setting_llm_model_id_v7")
+
+            st.markdown("#### 📄 チャンク設定")
+            chunk_size_form_val = st.number_input("チャンクサイズ", 100, 5000, int(current_values_dict.get("chunk_size", temp_default_cfg.chunk_size)), 100, help="1つのチャンクの最大文字数", key="setting_chunk_size_v7_tab_settings")
+            chunk_overlap_form_val = st.number_input("チャンクオーバーラップ", 0, 1000, int(current_values_dict.get("chunk_overlap", temp_default_cfg.chunk_overlap)), 50, help="隣接するチャンク間で重複する文字数", key="setting_chunk_overlap_v7_tab_settings")
+
+        with col2_settings:
+            st.markdown("#### 🔍 検索・RAG設定")
+            collection_name_form_val = st.text_input("コレクション名", current_values_dict.get("collection_name", temp_default_cfg.collection_name), help="ドキュメントを格納するコレクションの名前", key="setting_collection_name_v7_tab_settings")
+            final_k_form_val = st.slider("最終検索結果数 (Final K)", 1, 20, int(current_values_dict.get("final_k", temp_default_cfg.final_k)), help="LLMに渡す最終的なチャンク数", key="setting_final_k_v7_tab_settings")
+            vector_search_k_form_val = st.number_input("ベクトル検索数 (Vector K)", 1, 50, int(current_values_dict.get("vector_search_k", temp_default_cfg.vector_search_k)), help="ベクトル検索で取得する候補数", key="setting_vector_k_v7_tab_settings")
+            keyword_search_k_form_val = st.number_input("キーワード検索数 (Keyword K)", 1, 50, int(current_values_dict.get("keyword_search_k", temp_default_cfg.keyword_search_k)), help="キーワード検索で取得する候補数", key="setting_keyword_k_v7_tab_settings")
+            rrf_k_for_fusion_form_val = st.number_input("RAG-Fusion用RRF係数 (k)", 1, 100, int(current_values_dict.get("rrf_k_for_fusion", temp_default_cfg.rrf_k_for_fusion)), help="RAG-Fusion時のRRFで使用するk値 (通常60程度)", key="setting_rrf_k_v7_tab_settings")
+            
+        st.markdown("---")
+        st.markdown("#### 🗄️ データベース設定 (変更には注意が必要です)")
+        db_col1_settings, db_col2_settings = st.columns(2)
+        with db_col1_settings:
+            db_host_form_val = st.text_input("DBホスト", current_values_dict.get("db_host", temp_default_cfg.db_host), key="setting_db_host_v7_tab_settings")
+            db_name_form_val = st.text_input("DB名", current_values_dict.get("db_name", temp_default_cfg.db_name), key="setting_db_name_v7_tab_settings")
+            db_user_form_val = st.text_input("DBユーザー", current_values_dict.get("db_user", temp_default_cfg.db_user), key="setting_db_user_v7_tab_settings")
+        with db_col2_settings:
+            db_port_form_val = st.text_input("DBポート", str(current_values_dict.get("db_port", temp_default_cfg.db_port)), key="setting_db_port_v7_tab_settings")
+            db_password_form_val = st.text_input("DBパスワード", current_values_dict.get("db_password", temp_default_cfg.db_password), type="password", key="setting_db_pass_v7_tab_settings")
+            fts_language_options = ["english", "japanese", "simple", "german", "french"]
+            current_fts_lang = current_values_dict.get("fts_language", temp_default_cfg.fts_language)
+            fts_lang_idx = fts_language_options.index(current_fts_lang) if current_fts_lang in fts_language_options else 0
+            fts_language_form_val = st.selectbox("FTS言語", fts_language_options, index=fts_lang_idx, key="setting_fts_lang_v7_tab_settings", help="全文検索インデックスで使用する言語")
+
+        st.markdown("#### 📈 SQL分析設定")
+        max_sql_results_form_val = st.number_input(
+            "SQL最大取得行数", 10, 10000,
+            int(current_values_dict.get("max_sql_results", temp_default_cfg.max_sql_results)), 10,
+            help="SQLクエリでデータベースから取得する最大行数。",
+            key="setting_max_sql_results_v7_tab_settings"
+        )
+        max_sql_preview_llm_form_val = st.number_input(
+            "SQL結果LLMプレビュー行数", 1, 100,
+            int(current_values_dict.get("max_sql_preview_rows_for_llm", temp_default_cfg.max_sql_preview_rows_for_llm)), 1,
+            help="SQL実行結果をLLMに渡して要約させる際の最大プレビュー行数。",
+            key="setting_max_sql_preview_llm_v7_tab_settings"
+        )
+
+        s_col_form, r_col_form = st.columns([3,1])
+        apply_settings_button_form = s_col_form.form_submit_button("🔄 設定を適用", type="primary", use_container_width=True)
+        reset_settings_button_form = r_col_form.form_submit_button("↩️ デフォルトにリセット", use_container_width=True)
+
+    if apply_settings_button_form:
+        try:
+            form_values = {
+                "azure_openai_api_key": form_azure_openai_api_key,
+                "azure_openai_endpoint": form_azure_openai_endpoint,
+                "azure_openai_api_version": form_azure_openai_api_version,
+                "azure_openai_chat_deployment_name": form_azure_chat_deployment,
+                "azure_openai_embedding_deployment_name": form_azure_embedding_deployment,
+                "openai_api_key": None, # Explicitly set to None
+                "embedding_model_identifier": embedding_model_id_form_val,
+                "llm_model_identifier": llm_model_id_form_val,
+                "collection_name": collection_name_form_val,
+                "final_k": int(final_k_form_val),
+                "chunk_size": int(chunk_size_form_val),
+                "chunk_overlap": int(chunk_overlap_form_val),
+                "vector_search_k": int(vector_search_k_form_val),
+                "keyword_search_k": int(keyword_search_k_form_val),
+                "db_host": db_host_form_val,
+                "db_port": str(db_port_form_val),
+                "db_name": db_name_form_val,
+                "db_user": db_user_form_val,
+                "db_password": db_password_form_val,
+                "fts_language": fts_language_form_val,
+                "rrf_k_for_fusion": int(rrf_k_for_fusion_form_val),
+                "max_sql_results": int(max_sql_results_form_val),
+                "max_sql_preview_rows_for_llm": int(max_sql_preview_llm_form_val)
+            }
+            
+            new_app_config_obj = Config(**form_values)
+
+            cfg_changed_flag = False
+            if rag and hasattr(rag, 'config'):
+                for field_name in new_app_config_obj.__dict__:
+                    old_value = getattr(rag.config, field_name, None)
+                    new_value = getattr(new_app_config_obj, field_name)
+                    if new_value != old_value:
+                        cfg_changed_flag = True
+                        break
+            else:
+                cfg_changed_flag = True
+
+            if cfg_changed_flag:
+                st.info("設定が変更されました。システムを再初期化します...")
+
+            with st.spinner("設定を適用し、システムを初期化しています..."):
+                if "rag_system" in st.session_state:
+                    del st.session_state["rag_system"]
+                    st.cache_resource.clear()
+                
+                st.session_state.rag_system = initialize_rag_system(new_app_config_obj)
+                rag = st.session_state.rag_system
+            st.success("✅ 設定が正常に適用され、システムが初期化されました！")
+            time.sleep(1)
+            st.rerun()
+        except Exception as e_apply_settings:
+            st.error(f"❌ 設定の適用中にエラーが発生しました: {type(e_apply_settings).__name__} - {e_apply_settings}")
+
+    if reset_settings_button_form:
+        st.info("設定をデフォルト値にリセットし、システムを再初期化します...")
+        
+        default_config_for_reset_obj = Config()
+        
+        default_config_for_reset_obj.azure_openai_api_key = ENV_DEFAULTS["AZURE_OPENAI_API_KEY"]
+        default_config_for_reset_obj.azure_openai_endpoint = ENV_DEFAULTS["AZURE_OPENAI_ENDPOINT"]
+        default_config_for_reset_obj.azure_openai_api_version = ENV_DEFAULTS["AZURE_OPENAI_API_VERSION"]
+        default_config_for_reset_obj.azure_openai_chat_deployment_name = ENV_DEFAULTS["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
+        default_config_for_reset_obj.azure_openai_embedding_deployment_name = ENV_DEFAULTS["AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME"]
+        default_config_for_reset_obj.openai_api_key = None
+        default_config_for_reset_obj.embedding_model_identifier = ENV_DEFAULTS["EMBEDDING_MODEL_IDENTIFIER"]
+        default_config_for_reset_obj.llm_model_identifier = ENV_DEFAULTS["LLM_MODEL_IDENTIFIER"]
+        default_config_for_reset_obj.collection_name = ENV_DEFAULTS["COLLECTION_NAME"]
+        default_config_for_reset_obj.final_k = ENV_DEFAULTS["FINAL_K"]
+
+        with st.spinner("デフォルト設定でシステムを初期化しています..."):
+            if "rag_system" in st.session_state:
+                del st.session_state["rag_system"]
+                st.cache_resource.clear()
+            st.session_state.rag_system = initialize_rag_system(default_config_for_reset_obj)
+            rag = st.session_state.rag_system
+        st.success("✅ 設定がデフォルトにリセットされ、システムが初期化されました！")
+        time.sleep(1)
+        st.rerun()
+
+    st.markdown("---")
+    st.markdown("### 📋 現在の有効な設定")
+    if rag and hasattr(rag, 'config'):
+        config_display_dict = rag.config.__dict__.copy()
+        
+        sensitive_keys = ["db_password", "openai_api_key", "azure_openai_api_key"]
+        for key in sensitive_keys:
+            if key in config_display_dict and config_display_dict[key]:
+                value = str(config_display_dict[key])
+                config_display_dict[key] = f"***{value[-4:]}" if len(value) > 7 else "********"
+            elif key == "openai_api_key" and key in config_display_dict :
+                 config_display_dict[key] = "None (Fallback Disabled)"
+
+        
+        col1_disp_settings, col2_disp_settings = st.columns(2)
+        
+        items_to_display_list = list(config_display_dict.items())
+        mid_point_display = (len(items_to_display_list) + 1) // 2
+
+        with col1_disp_settings:
+            for key_disp, value_disp in items_to_display_list[:mid_point_display]:
+                st.markdown(f"**{key_disp.replace('_', ' ').capitalize()}:** `{str(value_disp)}`")
+        with col2_disp_settings:
+            for key_disp, value_disp in items_to_display_list[mid_point_display:]:
+                st.markdown(f"**{key_disp.replace('_', ' ').capitalize()}:** `{str(value_disp)}`")
+    else:
+        st.info("システムが初期化されていません。上記フォームから設定を適用してください。")

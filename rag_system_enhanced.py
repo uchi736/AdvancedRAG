@@ -8,6 +8,7 @@ Optimized for Amazon RDS PostgreSQL with Janome tokenizer
 - トークナイズされた日本語テキストの全文検索
 - Amazon RDS互換のPostgreSQL設定
 - 日本語・英語の自動判定とハイブリッド検索
+- Golden-Retriever機能による専門用語対応
 """
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ import asyncio
 import json
 import re
 import unicodedata
+import time
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Tuple, Set
@@ -179,6 +181,153 @@ class Config:
     max_sql_results: int = int(os.getenv("MAX_SQL_RESULTS", 1000))
     max_sql_preview_rows_for_llm: int = int(os.getenv("MAX_SQL_PREVIEW_ROWS_FOR_LLM", 20))
     user_table_prefix: str = os.getenv("USER_TABLE_PREFIX", "data_")
+
+    # Golden-Retriever settings
+    enable_jargon_extraction: bool = os.getenv("ENABLE_JARGON_EXTRACTION", "true").lower() == "true"
+    jargon_table_name: str = os.getenv("JARGON_TABLE_NAME", "jargon_dictionary")
+    max_jargon_terms_per_query: int = int(os.getenv("MAX_JARGON_TERMS_PER_QUERY", 5))
+    enable_doc_summarization: bool = os.getenv("ENABLE_DOC_SUMMARIZATION", "true").lower() == "true"
+    enable_metadata_enrichment: bool = os.getenv("ENABLE_METADATA_ENRICHMENT", "true").lower() == "true"
+    confidence_threshold: float = float(os.getenv("CONFIDENCE_THRESHOLD", 0.7))
+
+###############################################################################
+# Jargon Dictionary Manager                                                   #
+###############################################################################
+
+class JargonDictionaryManager:
+    """専門用語辞書を管理するクラス"""
+    
+    def __init__(self, connection_string: str, table_name: str = "jargon_dictionary"):
+        self.connection_string = connection_string
+        self.table_name = table_name
+        self._init_jargon_table()
+    
+    def _init_jargon_table(self):
+        """専門用語辞書テーブルを初期化"""
+        engine = create_engine(self.connection_string)
+        with engine.connect() as conn:
+            conn.execute(text(f"""
+                CREATE TABLE IF NOT EXISTS {self.table_name} (
+                    id SERIAL PRIMARY KEY,
+                    term TEXT UNIQUE NOT NULL,
+                    definition TEXT NOT NULL,
+                    domain TEXT,
+                    aliases TEXT[],
+                    related_terms TEXT[],
+                    confidence_score FLOAT DEFAULT 1.0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
+            # インデックスを作成
+            conn.execute(text(f"""
+                CREATE INDEX IF NOT EXISTS idx_jargon_term 
+                ON {self.table_name} (LOWER(term))
+            """))
+            conn.execute(text(f"""
+                CREATE INDEX IF NOT EXISTS idx_jargon_aliases 
+                ON {self.table_name} USING GIN(aliases)
+            """))
+            conn.commit()
+    
+    def add_term(self, term: str, definition: str, domain: Optional[str] = None,
+                 aliases: Optional[List[str]] = None, related_terms: Optional[List[str]] = None,
+                 confidence_score: float = 1.0) -> bool:
+        """専門用語を辞書に追加"""
+        try:
+            engine = create_engine(self.connection_string)
+            with engine.connect() as conn:
+                conn.execute(text(f"""
+                    INSERT INTO {self.table_name} 
+                    (term, definition, domain, aliases, related_terms, confidence_score)
+                    VALUES (:term, :definition, :domain, :aliases, :related_terms, :confidence_score)
+                    ON CONFLICT (term) DO UPDATE SET
+                        definition = EXCLUDED.definition,
+                        domain = EXCLUDED.domain,
+                        aliases = EXCLUDED.aliases,
+                        related_terms = EXCLUDED.related_terms,
+                        confidence_score = EXCLUDED.confidence_score,
+                        updated_at = CURRENT_TIMESTAMP
+                """), {
+                    "term": term,
+                    "definition": definition,
+                    "domain": domain,
+                    "aliases": aliases or [],
+                    "related_terms": related_terms or [],
+                    "confidence_score": confidence_score
+                })
+                conn.commit()
+            return True
+        except Exception as e:
+            print(f"Error adding term to jargon dictionary: {e}")
+            return False
+    
+    def lookup_terms(self, terms: List[str]) -> Dict[str, Dict[str, Any]]:
+        """複数の専門用語を一度に検索"""
+        if not terms:
+            return {}
+        
+        engine = create_engine(self.connection_string)
+        results = {}
+        
+        try:
+            with engine.connect() as conn:
+                # 大文字小文字を区別しない検索
+                placeholders = ', '.join([f':term_{i}' for i in range(len(terms))])
+                query = text(f"""
+                    SELECT term, definition, domain, aliases, related_terms, confidence_score
+                    FROM {self.table_name}
+                    WHERE LOWER(term) IN ({placeholders})
+                    OR term = ANY(:aliases_check)
+                """)
+                
+                params = {f"term_{i}": term.lower() for i, term in enumerate(terms)}
+                params["aliases_check"] = terms
+                
+                rows = conn.execute(query, params).fetchall()
+                
+                for row in rows:
+                    results[row.term] = {
+                        "definition": row.definition,
+                        "domain": row.domain,
+                        "aliases": row.aliases or [],
+                        "related_terms": row.related_terms or [],
+                        "confidence_score": row.confidence_score
+                    }
+        except Exception as e:
+            print(f"Error looking up terms: {e}")
+        
+        return results
+    
+    def bulk_import_from_csv(self, csv_path: str) -> Tuple[int, int]:
+        """CSVファイルから専門用語を一括インポート"""
+        try:
+            df = pd.read_csv(csv_path)
+            success_count = 0
+            error_count = 0
+            
+            required_columns = ["term", "definition"]
+            if not all(col in df.columns for col in required_columns):
+                raise ValueError(f"CSV must contain columns: {required_columns}")
+            
+            for _, row in df.iterrows():
+                success = self.add_term(
+                    term=row["term"],
+                    definition=row["definition"],
+                    domain=row.get("domain"),
+                    aliases=row.get("aliases", "").split("|") if "aliases" in row and pd.notna(row["aliases"]) else None,
+                    related_terms=row.get("related_terms", "").split("|") if "related_terms" in row and pd.notna(row["related_terms"]) else None,
+                    confidence_score=row.get("confidence_score", 1.0)
+                )
+                if success:
+                    success_count += 1
+                else:
+                    error_count += 1
+            
+            return success_count, error_count
+        except Exception as e:
+            print(f"Error importing from CSV: {e}")
+            return 0, -1
 
 ###############################################################################
 # Enhanced Hybrid Retriever with Japanese Support                             #
@@ -357,6 +506,11 @@ class RAGSystem:
 
         self.connection_string = self._conn_str()
         self._init_db()
+
+        self.jargon_manager = JargonDictionaryManager(
+            self.connection_string, 
+            cfg.jargon_table_name
+        )
         
         self.vector_store = PGVector(
             connection_string=self.connection_string,
@@ -395,6 +549,44 @@ class RAGSystem:
         )
         
         self._query_expansion_llm_chain = self.query_expansion_prompt | self.llm | StrOutputParser()
+
+        # Golden-Retriever用のプロンプト
+        self.jargon_extraction_prompt = ChatPromptTemplate.from_template(
+            """あなたは専門用語の抽出エキスパートです。以下の質問から、専門用語、略語、固有名詞、技術用語を抽出してください。
+一般的な単語は除外し、ドメイン固有の用語のみを抽出してください。
+
+質問: {question}
+
+抽出された専門用語（改行で区切って、最大{max_terms}個まで）:"""
+        )
+        self._jargon_extraction_chain = self.jargon_extraction_prompt | self.llm | StrOutputParser()
+        
+        self.query_augmentation_prompt = ChatPromptTemplate.from_template(
+            """以下の質問と専門用語の定義を考慮して、より明確で検索しやすい質問に書き換えてください。
+専門用語の定義を質問に自然に組み込み、曖昧さを排除してください。
+
+元の質問: {original_question}
+
+専門用語と定義:
+{jargon_definitions}
+
+補強された質問:"""
+        )
+        self._query_augmentation_chain = self.query_augmentation_prompt | self.llm | StrOutputParser()
+        
+        self.document_summary_prompt = ChatPromptTemplate.from_template(
+            """以下の文書の内容を要約し、検索に適したメタデータを生成してください。
+
+文書の内容:
+{content}
+
+以下の形式で出力してください:
+要約: （200文字以内の要約）
+キーワード: （カンマ区切りの主要キーワード、最大10個）
+専門分野: （該当する専門分野）
+重要度: （1-5の数値、5が最も重要）"""
+        )
+        self._doc_summary_chain = self.document_summary_prompt | self.llm | StrOutputParser()
 
         # SQL関連のプロンプト（既存のものを継承）
         self.multi_table_text_to_sql_prompt = ChatPromptTemplate.from_template(
@@ -475,33 +667,22 @@ SQL実行結果のプレビュー (最大 {max_preview_rows} 件表示):
         """データベースの初期化（日本語検索用カラムを追加）"""
         engine = create_engine(self.connection_string)
         with engine.connect() as conn:
-            # 既存のコード...
-            
-            # term_dictionary テーブルの作成
+            # document_chunks テーブルの作成（既存のコードを想定）
             conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS term_dictionary (
-                    id SERIAL PRIMARY KEY,
-                    term VARCHAR(255) UNIQUE NOT NULL,
-                    synonyms TEXT[] DEFAULT '{}',
-                    definition TEXT,
-                    sources TEXT[] DEFAULT '{}',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                CREATE TABLE IF NOT EXISTS document_chunks (
+                    chunk_id TEXT PRIMARY KEY,
+                    collection_name TEXT,
+                    document_id TEXT,
+                    content TEXT,
+                    tokenized_content TEXT,
+                    metadata JSONB,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_doc_chunks_coll_doc ON document_chunks(collection_name, document_id);"))
             
-            # term_dictionary のインデックス作成
-            try:
-                conn.execute(text("""
-                    CREATE INDEX IF NOT EXISTS idx_term_dictionary_term ON term_dictionary(term);
-                """))
-                conn.execute(text("""
-                    CREATE INDEX IF NOT EXISTS idx_term_dictionary_synonyms ON term_dictionary USING GIN(synonyms);
-                """))
-            except Exception as e:
-                print(f"Note: Could not create term_dictionary indexes: {e}")
-            
-            # 更新時刻を自動更新するトリガー関数
+            # JargonDictionaryManagerがテーブル自体は作成する
+            # ここでは共通で使えるトリガー関数と、jargon_dictionaryへのトリガー適用を試みる
             try:
                 conn.execute(text("""
                     CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -513,16 +694,17 @@ SQL実行結果のプレビュー (最大 {max_preview_rows} 件表示):
                     $$ language 'plpgsql';
                 """))
                 
-                # トリガーの作成
-                conn.execute(text("""
-                    DROP TRIGGER IF EXISTS update_term_dictionary_updated_at ON term_dictionary;
-                    CREATE TRIGGER update_term_dictionary_updated_at 
-                        BEFORE UPDATE ON term_dictionary 
+                # jargon_dictionary テーブルにトリガーを適用
+                conn.execute(text(f"""
+                    DROP TRIGGER IF EXISTS update_jargon_dictionary_updated_at ON {self.config.jargon_table_name};
+                    CREATE TRIGGER update_jargon_dictionary_updated_at 
+                        BEFORE UPDATE ON {self.config.jargon_table_name}
                         FOR EACH ROW 
                         EXECUTE FUNCTION update_updated_at_column();
                 """))
             except Exception as e:
-                print(f"Note: Could not create term_dictionary trigger: {e}")
+                # テーブルが存在しない場合などにエラーになる可能性があるが、許容する
+                print(f"Note: Could not create jargon_dictionary trigger (this may be expected on first run): {e}")
             
             conn.commit()
 
@@ -667,6 +849,142 @@ SQL実行結果のプレビュー (最大 {max_preview_rows} 件表示):
     def _get_answer_generation_chain(self) -> RunnableSequence:
         return self.base_rag_prompt | self.llm | StrOutputParser()
 
+    def extract_jargon_terms(self, question: str, config: Optional[RunnableConfig] = None) -> List[str]:
+        """質問から専門用語を抽出"""
+        try:
+            response = self._jargon_extraction_chain.invoke({
+                "question": question,
+                "max_terms": self.config.max_jargon_terms_per_query
+            }, config=config)
+            
+            # 抽出された用語をリストに変換
+            terms = [term.strip() for term in response.split('\n') if term.strip()]
+            return terms[:self.config.max_jargon_terms_per_query]
+        except Exception as e:
+            print(f"Error extracting jargon terms: {e}")
+            return []
+    
+    def augment_query_with_jargon(self, question: str, jargon_terms: List[str], 
+                                  config: Optional[RunnableConfig] = None) -> str:
+        """専門用語の定義を使ってクエリを補強"""
+        if not jargon_terms:
+            return question
+        
+        # 専門用語辞書から定義を取得
+        jargon_info = self.jargon_manager.lookup_terms(jargon_terms)
+        
+        if not jargon_info:
+            return question
+        
+        # 定義情報を整形
+        definitions_text = []
+        for term, info in jargon_info.items():
+            definition = info["definition"]
+            domain = info.get("domain", "一般")
+            definitions_text.append(f"- {term}: {definition} (分野: {domain})")
+        
+        if not definitions_text:
+            return question
+        
+        try:
+            augmented_query = self._query_augmentation_chain.invoke({
+                "original_question": question,
+                "jargon_definitions": "\n".join(definitions_text)
+            }, config=config)
+            return augmented_query
+        except Exception as e:
+            print(f"Error augmenting query: {e}")
+            return question
+
+    def process_document_with_metadata(self, doc: Document, config: Optional[RunnableConfig] = None) -> Document:
+        """文書にメタデータと要約を追加（オフラインプロセス）"""
+        if not self.config.enable_metadata_enrichment:
+            return doc
+        
+        try:
+            # 文書の要約とメタデータを生成
+            response = self._doc_summary_chain.invoke({
+                "content": doc.page_content[:2000]  # 最初の2000文字を使用
+            }, config=config)
+            
+            # レスポンスをパース
+            lines = response.split('\n')
+            summary = ""
+            keywords = []
+            domain = "一般"
+            importance = 3
+            
+            for line in lines:
+                if line.startswith("要約:"):
+                    summary = line.replace("要約:", "").strip()
+                elif line.startswith("キーワード:"):
+                    keywords = [k.strip() for k in line.replace("キーワード:", "").split(",")]
+                elif line.startswith("専門分野:"):
+                    domain = line.replace("専門分野:", "").strip()
+                elif line.startswith("重要度:"):
+                    try:
+                        importance = int(line.replace("重要度:", "").strip())
+                    except:
+                        importance = 3
+            
+            # メタデータを更新
+            enhanced_metadata = doc.metadata.copy() if doc.metadata else {}
+            enhanced_metadata.update({
+                "summary": summary,
+                "keywords": keywords,
+                "domain": domain,
+                "importance": importance,
+                "processed_with_golden_retriever": True
+            })
+            
+            doc.metadata = enhanced_metadata
+            return doc
+        except Exception as e:
+            print(f"Error processing document metadata: {e}")
+            return doc
+
+    def add_jargon_terms_from_documents(self, threshold: float = 0.8) -> int:
+        """文書から専門用語を自動抽出して辞書に追加"""
+        # 実装例：文書中の頻出する専門的な用語を抽出
+        # ここでは簡単な実装を示す
+        engine = create_engine(self.connection_string)
+        added_count = 0
+        
+        try:
+            with engine.connect() as conn:
+                # キーワードメタデータから専門用語候補を取得
+                result = conn.execute(text("""
+                    SELECT metadata->>'keywords' as keywords
+                    FROM document_chunks
+                    WHERE collection_name = :collection
+                    AND metadata->>'processed_with_golden_retriever' = 'true'
+                    AND metadata->>'keywords' IS NOT NULL
+                """), {"collection": self.config.collection_name})
+                
+                keyword_freq = {}
+                for row in result:
+                    if row.keywords:
+                        keywords = json.loads(row.keywords) if isinstance(row.keywords, str) else row.keywords
+                        for keyword in keywords:
+                            keyword_freq[keyword] = keyword_freq.get(keyword, 0) + 1
+                
+                # 頻出キーワードを専門用語として追加
+                for term, freq in keyword_freq.items():
+                    if freq >= 3:  # 3回以上出現
+                        # 簡単な定義を生成（実際にはもっと高度な処理が必要）
+                        success = self.jargon_manager.add_term(
+                            term=term,
+                            definition=f"{term}に関する専門用語",
+                            confidence_score=min(freq / 10, 1.0)
+                        )
+                        if success:
+                            added_count += 1
+                
+        except Exception as e:
+            print(f"Error extracting jargon from documents: {e}")
+        
+        return added_count
+
     def _build_rag_pipeline(
         self,
         retrieval_chain: RunnableSequence,
@@ -687,7 +1005,37 @@ SQL実行結果のプレビュー (最大 {max_preview_rows} 件表示):
         return pipeline
 
     def query(self, question: str, *, use_query_expansion: bool = False, use_rag_fusion: bool = False, config: Optional[RunnableConfig] = None) -> Dict[str, Any]:
-        """メインのクエリメソッド"""
+        """メインのクエリメソッド (Golden-Retriever対応)"""
+        original_question = question
+        
+        # Golden-Retriever処理
+        golden_retriever_info = {
+            "enabled": self.config.enable_jargon_extraction,
+            "extracted_terms": [],
+            "augmented_query": question,
+            "jargon_definitions": {}
+        }
+        
+        if self.config.enable_jargon_extraction:
+            # 1. 専門用語を抽出
+            jargon_terms = self.extract_jargon_terms(question, config=config)
+            golden_retriever_info["extracted_terms"] = jargon_terms
+            
+            if jargon_terms:
+                # 2. 専門用語の定義を取得
+                jargon_definitions = self.jargon_manager.lookup_terms(jargon_terms)
+                golden_retriever_info["jargon_definitions"] = jargon_definitions
+                
+                # 3. クエリを補強
+                augmented_query = self.augment_query_with_jargon(
+                    question, jargon_terms, config=config
+                )
+                golden_retriever_info["augmented_query"] = augmented_query
+                
+                # 補強されたクエリを使用
+                question = augmented_query
+
+        # RAGパイプラインの構築
         openai_cb_result = {}
         chain_input = {
             "question": question,
@@ -735,11 +1083,12 @@ SQL実行結果のプレビュー (最大 {max_preview_rows} 件表示):
         } for s in final_sources]
         
         return {
-            "question": question,
+            "question": original_question,
             "answer": answer_text,
             "sources": sources_data,
             "usage": openai_cb_result,
-            "query_expansion": final_expanded_info
+            "query_expansion": final_expanded_info,
+            "golden_retriever": golden_retriever_info
         }
 
     # 以下、既存のSQL関連メソッドをそのまま継承
@@ -1231,7 +1580,12 @@ SQL実行結果のプレビュー (最大 {max_preview_rows} 件表示):
             suf = path.suffix.lower()
             try:
                 if suf == ".pdf":
-                    docs.extend(PyPDFLoader(str(path)).load())
+                    try:
+                        # UnstructuredFileLoader is often better for complex PDFs
+                        docs.extend(UnstructuredFileLoader(str(path), mode="single", strategy="fast").load())
+                    except Exception:
+                        # Fallback to PyPDFLoader if Unstructured fails
+                        docs.extend(PyPDFLoader(str(path)).load())
                 elif suf in {".txt", ".md"}:
                     docs.extend(TextLoader(str(path), encoding="utf-8").load())
                 elif suf == ".docx":
@@ -1249,7 +1603,7 @@ SQL実行結果のプレビュー (最大 {max_preview_rows} 件表示):
         return docs
 
     def chunk_documents(self, docs: List[Document]) -> List[Document]:
-        """ドキュメントのチャンク分割（日本語対応）"""
+        """ドキュメントのチャンク分割（日本語対応＆メタデータ付与）"""
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=self.config.chunk_size,
             chunk_overlap=self.config.chunk_overlap
@@ -1276,42 +1630,50 @@ SQL実行結果のプレビュー (最大 {max_preview_rows} 件表示):
                         "collection_name": self.config.collection_name
                     })
                     c.metadata = new_metadata
+                    
+                    # Golden-Retriever: メタデータと要約を追加
+                    if self.config.enable_metadata_enrichment:
+                        c = self.process_document_with_metadata(c)
+
                     out.append(c)
             except Exception as e:
                 print(f"Error splitting document {src}: {type(e).__name__} - {e}")
         return out
 
-    def ingest_documents(self, paths: List[str]):
-        """ドキュメントの取り込み"""
-        docs = self.load_documents(paths)
-        if not docs:
+    def ingest_documents(self, paths: List[str], batch_size: int = 5):
+        """ドキュメントの取り込み（バッチ処理を無効化）"""
+        print("Loading documents...")
+        all_docs = self.load_documents(paths)
+        if not all_docs:
             print("No documents loaded for ingestion.")
             return
-        
-        chunks = self.chunk_documents(docs)
+
+        print(f"Loaded {len(all_docs)} pages. Chunking documents...")
+        chunks = self.chunk_documents(all_docs)
         if not chunks:
             print("No chunks created from documents.")
             return
-        
+
         valid_chunks = [
-            c for c in chunks 
-            if isinstance(c, Document) and 
-               isinstance(c.metadata, dict) and 
-               'chunk_id' in c.metadata and 
-               c.page_content and 
+            c for c in chunks
+            if isinstance(c, Document) and
+               isinstance(c.metadata, dict) and
+               'chunk_id' in c.metadata and
+               c.page_content and
                c.page_content.strip()
         ]
-        
+
         if not valid_chunks:
             print("No valid chunks to ingest after validation.")
             return
         
+        print(f"Ingesting {len(valid_chunks)} chunks at once...")
         chunk_ids_for_vectorstore = [c.metadata['chunk_id'] for c in valid_chunks]
-        
+
         try:
             self.vector_store.add_documents(valid_chunks, ids=chunk_ids_for_vectorstore)
             self._store_chunks_for_keyword_search(valid_chunks)
-            print(f"Successfully ingested {len(valid_chunks)} chunks from {len(paths)} file(s).")
+            print(f"\nTotal successfully ingested {len(valid_chunks)} chunks from {len(all_docs)} pages.")
         except Exception as e:
             print(f"Error during ingestion: {type(e).__name__} - {e}")
 
@@ -1378,4 +1740,4 @@ def format_docs(docs: List[Document]) -> str:
     return "\n\n".join([f"[ソース {i+1} ChunkID: {d.metadata.get('chunk_id', 'N/A')}]\n{d.page_content}" for i, d in enumerate(docs)])
 
 
-__all__ = ["Config", "RAGSystem", "JapaneseTextProcessor"]
+__all__ = ["Config", "RAGSystem", "JapaneseTextProcessor", "JargonDictionaryManager"]

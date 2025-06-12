@@ -1,12 +1,172 @@
-[
-  {
-    "term": "テスト用語",
-    "synonyms": [
-      "試験用語"
-    ],
-    "definition": "これはテストレコードです。",
-    "sources": [
-      "C:\\Users\\j2370\\Desktop\\test\\医薬品のがん原性試験に関するガイドラインの改正について.pdf"
-    ]
-  }
-]
+{
+  "terms": [
+    {
+      "headword": "ハーモナイゼーション",
+      "synonyms": [
+        "調和"
+      ],
+      "definition": "異なるシステムや基準を統一することで、相互運用性や効率性を向上させること。医薬品規制においては、国際的な基準の統一を指すことが多い。",
+      "category": "医薬品規制"
+    },
+    {
+      "headword": "ハーモナイゼーション推進",
+      "synonyms": [],
+      "definition": "異なるシステムや基準を統一することで、相互運用性や効率性を向上させる活動。医薬品規制においては、国際的な基準の統一を促進する活動。",
+      "category": "医薬品規制"
+    },
+    {
+      "headword": "二段階発がんモデル",
+      "synonyms": [],
+      "definition": "発がん過程を2段階（開始段階と促進段階）に分けてモデル化したもので、発がんメカニズムの解明や発がん物質の検出に用いられる。",
+      "category": "発がん研究"
+    },
+    {
+      "headword": "短期代替発がん試験",
+      "synonyms": [],
+      "definition": "長期がん原性試験に代わる、より短期間で発がん性を評価できる試験法。トランスジェニックマウスを用いた試験などが含まれる。",
+      "category": "発がん研究"
+    },
+    {
+      "headword": "トランスジェニックマウス",
+      "synonyms": [],
+      "definition": "特定の遺伝子を導入したマウス。発がん感受性を高めたマウスを用いることで、発がん性をより効率的に検出できる。",
+      "category": "発がん研究"
+    },
+    {
+      "headword": "長期発がん試験",
+      "synonyms": [
+        "長期がん原性試験"
+      ],
+      "definition": "げっ歯類を用いて、長期間（通常2年以上）にわたって発がん性を評価する試験。",
+      "category": "発がん研究"
+    },
+    {
+      "headword": "製造販売承認申請",
+      "synonyms": [],
+      "definition": "医薬品を製造販売するために、厚生労働省に提出する承認申請。",
+      "category": "医薬品規制"
+    },
+    {
+      "headword": "規制調和国際会議（ICH）",
+      "synonyms": [],
+      "definition": "医薬品規制の国際的な調和を目的とした国際会議。",
+      "category": "医薬品規制"
+    },
+    {
+      "headword": "試験ガイドライン",
+      "synonyms": [
+        "ガイドライン"
+      ],
+      "definition": "医薬品開発や試験における手順や基準を定めた指針。",
+      "category": "医薬品規制"
+    },
+    {
+      "headword": "旧ガイドライン",
+      "synonyms": [],
+      "definition": "改正前の医薬品のがん原性試験に関するガイドライン。",
+      "category": "医薬品規制"
+    },
+    {
+      "headword": "承認審査資料",
+      "synonyms": [
+        "申請資料"
+      ],
+      "definition": "医薬品承認申請に添付する資料。",
+      "category": "医薬品規制"
+    },
+    {
+      "headword": "Weight of Evidence",
+      "synonyms": [
+        "重み付け"
+      ],
+      "definition": "複数の証拠を総合的に評価し、結論を導き出す手法。医薬品のがん原性評価においては、様々な試験データの重み付けを行い、ヒトのがん原性リスクを評価する際に用いられる。",
+      "category": "リスク評価"
+    },
+    {
+      "headword": "リスク評価",
+      "synonyms": [],
+      "definition": "医薬品などの有害事象発生の可能性とその程度を評価すること。",
+      "category": "医薬品規制"
+    },
+    {
+      "headword": "性評価戦略",
+      "synonyms": [],
+      "definition": "医薬品のがん原性を評価するための計画。",
+      "category": "医薬品規制"
+    },
+    {
+      "headword": "薬物動態",
+      "synonyms": [],
+      "definition": "薬物が体内で吸収、分布、代謝、排泄される過程。",
+      "category": "薬理学"
+    },
+    {
+      "headword": "rasH2",
+      "synonyms": [],
+      "definition": "特定の遺伝子変異を持つマウス系統。",
+      "category": "発がん研究"
+    },
+    {
+      "headword": "発がん試験",
+      "synonyms": [
+        "がん原性試験"
+      ],
+      "definition": "物質が発がん性を有するか否かを調べる試験。",
+      "category": "発がん研究"
+    },
+    {
+      "headword": "ガイダンス",
+      "synonyms": [],
+      "definition": "指針、助言。",
+      "category": "医薬品規制"
+    },
+    {
+      "headword": "Part2",
+      "synonyms": [],
+      "definition": "ICHガイドラインの補遺の第二部。",
+      "category": "医薬品規制"
+    },
+    {
+      "headword": "アプローチ",
+      "synonyms": [
+        "手法"
+      ],
+      "definition": "問題解決のための方法、手順。",
+      "category": "一般"
+    },
+    {
+      "headword": "プロセス",
+      "synonyms": [
+        "手順"
+      ],
+      "definition": "一連の作業や活動。",
+      "category": "一般"
+    },
+    {
+      "headword": "独立行政法人医薬品医療機器総合機構",
+      "synonyms": [
+        "医薬品医療機器総合機構"
+      ],
+      "definition": "医薬品の審査や承認に関わる独立行政法人。",
+      "category": "医薬品規制"
+    },
+    {
+      "headword": "通知別添",
+      "synonyms": [],
+      "definition": "通知に添付された資料。",
+      "category": "医薬品規制"
+    },
+    {
+      "headword": "当該評価資料",
+      "synonyms": [],
+      "definition": "該当する評価に関する資料。",
+      "category": "医薬品規制"
+    },
+    {
+      "headword": "当該試験",
+      "synonyms": [],
+      "definition": "該当する試験。",
+      "category": "医薬品規制"
+    }
+  ]
+}
