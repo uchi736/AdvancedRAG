@@ -114,6 +114,9 @@ class RAGSystem:
     def delete_data_table(self, table_name: str) -> tuple[bool, str]:
         return self.sql_handler.delete_data_table(table_name)
 
+    def get_chunks_by_document_id(self, document_id: str):
+        return self.sql_handler.get_chunks_by_document_id(document_id)
+
     # --- Core Query Logic ---
     def query(self, question: str, *, use_query_expansion: bool = False, use_rag_fusion: bool = False, config: Optional[RunnableConfig] = None) -> Dict[str, Any]:
         original_question = question

@@ -4,7 +4,7 @@ from sqlalchemy import create_engine, text
 from typing import List
 
 from langchain_community.document_loaders import (
-    PyPDFLoader, TextLoader, UnstructuredFileLoader, Docx2txtLoader
+    PyPDFLoader, TextLoader, Docx2txtLoader
 )
 try:
     from langchain_community.document_loaders import TextractLoader
@@ -30,11 +30,11 @@ class IngestionHandler:
             suf = path.suffix.lower()
             try:
                 if suf == ".pdf":
-                    docs.extend(UnstructuredFileLoader(str(path), mode="single", strategy="fast").load())
+                    docs.extend(PyPDFLoader(str(path)).load())
                 elif suf in {".txt", ".md"}:
                     docs.extend(TextLoader(str(path), encoding="utf-8").load())
                 elif suf == ".docx":
-                    docs.extend(UnstructuredFileLoader(str(path), mode="single", strategy="fast").load())
+                    docs.extend(Docx2txtLoader(str(path)).load())
                 elif suf == ".doc" and TextractLoader:
                     docs.extend(TextractLoader(str(path)).load())
             except Exception as e:
