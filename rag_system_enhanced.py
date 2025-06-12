@@ -78,12 +78,23 @@ class RAGSystem:
 
     def _init_llms_and_embeddings(self):
         cfg = self.config
-        if all([cfg.azure_openai_api_key, cfg.azure_openai_endpoint, cfg.azure_openai_chat_deployment_name, cfg.azure_openai_embedding_deployment_name]):
-            self.llm = AzureChatOpenAI(azure_endpoint=cfg.azure_openai_endpoint, api_key=cfg.azure_openai_api_key, api_version=cfg.azure_openai_api_version, azure_deployment=cfg.azure_openai_chat_deployment_name, temperature=0.7)
-            self.embeddings = AzureOpenAIEmbeddings(azure_endpoint=cfg.azure_openai_endpoint, api_key=cfg.azure_openai_api_key, api_version=cfg.azure_openai_api_version, azure_deployment=cfg.azure_openai_embedding_deployment_name)
-            print("RAGSystem initialized with Azure OpenAI.")
-        else:
-            raise ValueError("Azure OpenAI API credentials are not fully configured.")
+        if not all([cfg.azure_openai_api_key, cfg.azure_openai_endpoint, cfg.azure_openai_chat_deployment_name, cfg.azure_openai_embedding_deployment_name]):
+            raise ValueError("Azure OpenAI API credentials are not fully configured. Please provide all required Azure settings.")
+        
+        self.llm = AzureChatOpenAI(
+            azure_endpoint=cfg.azure_openai_endpoint, 
+            api_key=cfg.azure_openai_api_key, 
+            api_version=cfg.azure_openai_api_version, 
+            azure_deployment=cfg.azure_openai_chat_deployment_name, 
+            temperature=0.7
+        )
+        self.embeddings = AzureOpenAIEmbeddings(
+            azure_endpoint=cfg.azure_openai_endpoint, 
+            api_key=cfg.azure_openai_api_key, 
+            api_version=cfg.azure_openai_api_version, 
+            azure_deployment=cfg.azure_openai_embedding_deployment_name
+        )
+        print("RAGSystem initialized with Azure OpenAI.")
 
     def _init_db(self):
         engine = create_engine(self.connection_string)
@@ -155,12 +166,14 @@ class RAGSystem:
             final_sources = self.retriever.invoke(retrieval_query, config=config)
 
         # 3. Generate answer based on retrieved documents
-        context = format_docs(final_sources)
-        answer_payload = {"question": original_question, "context": context}
-
         with get_openai_callback() as cb:
-            answer = self.chains["answer_generation"].invoke(answer_payload, config=config)
+            chain_output = self.chains["answer_generation"].invoke({
+                "context": final_sources,
+                "question": original_question
+            }, config=config)
             usage = {"total_tokens": cb.total_tokens, "cost": cb.total_cost}
+        
+        answer = chain_output
 
         # 4. Assemble final response
         return {

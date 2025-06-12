@@ -1,5 +1,5 @@
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnableSequence
+from langchain_core.runnables import RunnableSequence, RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
 
 def create_chains(llm, max_sql_results: int) -> dict:
@@ -8,6 +8,7 @@ def create_chains(llm, max_sql_results: int) -> dict:
     # --- RAG Chains ---
     base_rag_prompt = ChatPromptTemplate.from_template(
         """あなたは親切で知識豊富なアシスタントです。以下のコンテキストを参考に質問に答えてください。
+コンテキストには、テキストの抜粋だけでなく、図や表を説明する要約が含まれている場合があります。
 
 コンテキスト:
 {context}
@@ -16,7 +17,16 @@ def create_chains(llm, max_sql_results: int) -> dict:
 
 回答:"""
     )
-    answer_generation_chain = base_rag_prompt | llm | StrOutputParser()
+    
+    # This chain now returns a dictionary with the answer and the source documents
+    answer_generation_chain = RunnablePassthrough.assign(
+        answer=RunnablePassthrough.assign(
+            context=(lambda x: "\n\n".join(doc.page_content for doc in x["context"]))
+        )
+        | base_rag_prompt
+        | llm
+        | StrOutputParser()
+    )
 
     query_expansion_prompt = ChatPromptTemplate.from_template(
         """以下の質問に対して、より良い検索結果を得るために、関連する追加の検索クエリを3つ生成してください。

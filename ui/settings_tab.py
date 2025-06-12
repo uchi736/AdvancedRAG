@@ -83,8 +83,37 @@ def _render_model_identifiers(values, defaults):
 
 def _render_chunking_settings(values, defaults):
     st.markdown("#### 📄 チャンク設定")
-    st.session_state.form_values['chunk_size'] = st.number_input("チャンクサイズ", 100, 5000, int(values.get("chunk_size", defaults.chunk_size)), 100, key="setting_chunk_size_v7")
-    st.session_state.form_values['chunk_overlap'] = st.number_input("チャンクオーバーラップ", 0, 1000, int(values.get("chunk_overlap", defaults.chunk_overlap)), 50, key="setting_chunk_overlap_v7")
+    
+    enable_parent_child = st.checkbox(
+        "親子チャンクを有効にする", 
+        value=values.get("enable_parent_child_chunking", defaults.enable_parent_child_chunking), 
+        key="setting_parent_child_enable_v7",
+        help="大きな親チャンクと小さな子チャンクを作成します。検索は子チャンクで行い、コンテキストとして親チャンクを使用することで、精度と網羅性を両立します。"
+    )
+    st.session_state.form_values['enable_parent_child_chunking'] = enable_parent_child
+
+    if enable_parent_child:
+        st.markdown("##### 親チャンク設定")
+        st.session_state.form_values['parent_chunk_size'] = st.number_input("親チャンクサイズ", 500, 10000, int(values.get("parent_chunk_size", defaults.parent_chunk_size)), 100, key="setting_parent_chunk_size_v7")
+        st.session_state.form_values['parent_chunk_overlap'] = st.number_input("親チャンクオーバーラップ", 0, 2000, int(values.get("parent_chunk_overlap", defaults.parent_chunk_overlap)), 50, key="setting_parent_chunk_overlap_v7")
+        
+        st.markdown("##### 子チャンク設定")
+        st.session_state.form_values['child_chunk_size'] = st.number_input("子チャンクサイズ", 50, 2000, int(values.get("child_chunk_size", defaults.child_chunk_size)), 50, key="setting_child_chunk_size_v7")
+        st.session_state.form_values['child_chunk_overlap'] = st.number_input("子チャンクオーバーラップ", 0, 500, int(values.get("child_chunk_overlap", defaults.child_chunk_overlap)), 10, key="setting_child_chunk_overlap_v7")
+        
+        # フォールバック用の設定はデフォルト値に
+        st.session_state.form_values['chunk_size'] = defaults.chunk_size
+        st.session_state.form_values['chunk_overlap'] = defaults.chunk_overlap
+    else:
+        st.markdown("##### 標準チャンク設定")
+        st.session_state.form_values['chunk_size'] = st.number_input("チャンクサイズ", 100, 5000, int(values.get("chunk_size", defaults.chunk_size)), 100, key="setting_chunk_size_v7")
+        st.session_state.form_values['chunk_overlap'] = st.number_input("チャンクオーバーラップ", 0, 1000, int(values.get("chunk_overlap", defaults.chunk_overlap)), 50, key="setting_chunk_overlap_v7")
+
+        # 親子チャンク設定はデフォルト値に
+        st.session_state.form_values['parent_chunk_size'] = defaults.parent_chunk_size
+        st.session_state.form_values['parent_chunk_overlap'] = defaults.parent_chunk_overlap
+        st.session_state.form_values['child_chunk_size'] = defaults.child_chunk_size
+        st.session_state.form_values['child_chunk_overlap'] = defaults.child_chunk_overlap
 
 def _render_search_rag_settings(values, defaults):
     st.markdown("#### 🔍 検索・RAG設定")

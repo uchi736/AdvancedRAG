@@ -24,8 +24,13 @@ class Config:
     azure_openai_embedding_deployment_name: Optional[str] = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME")
 
     # RAG and Search settings
-    chunk_size: int = int(os.getenv("CHUNK_SIZE", 1000))
-    chunk_overlap: int = int(os.getenv("CHUNK_OVERLAP", 200))
+    enable_parent_child_chunking: bool = os.getenv("ENABLE_PARENT_CHILD_CHUNKING", "false").lower() == "true"
+    parent_chunk_size: int = int(os.getenv("PARENT_CHUNK_SIZE", 2000))
+    parent_chunk_overlap: int = int(os.getenv("PARENT_CHUNK_OVERLAP", 400))
+    child_chunk_size: int = int(os.getenv("CHILD_CHUNK_SIZE", 400))
+    child_chunk_overlap: int = int(os.getenv("CHILD_CHUNK_OVERLAP", 100))
+    chunk_size: int = int(os.getenv("CHUNK_SIZE", 1000)) # Kept for fallback
+    chunk_overlap: int = int(os.getenv("CHUNK_OVERLAP", 200)) # Kept for fallback
     vector_search_k: int = int(os.getenv("VECTOR_SEARCH_K", 10))
     keyword_search_k: int = int(os.getenv("KEYWORD_SEARCH_K", 10))
     final_k: int = int(os.getenv("FINAL_K", 5))
