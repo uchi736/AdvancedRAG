@@ -20,6 +20,38 @@ def render_dictionary_tab(rag_system):
 
     jargon_manager = rag_system.jargon_manager
 
+    # Manual term registration form
+    with st.expander("➕ 新しい用語を手動で登録する"):
+        with st.form(key="add_term_form"):
+            new_term = st.text_input("用語*", help="登録する専門用語")
+            new_definition = st.text_area("定義*", help="用語の定義や説明")
+            new_domain = st.text_input("分野", help="関連する技術分野やドメイン")
+            new_aliases = st.text_input("類義語 (カンマ区切り)", help="例: RAG, 検索拡張生成")
+            new_related_terms = st.text_input("関連語 (カンマ区切り)", help="例: LLM, Vector Search")
+            
+            submitted = st.form_submit_button("登録")
+            if submitted:
+                if not new_term or not new_definition:
+                    st.error("「用語」と「定義」は必須項目です。")
+                else:
+                    aliases_list = [alias.strip() for alias in new_aliases.split(',') if alias.strip()]
+                    related_list = [rel.strip() for rel in new_related_terms.split(',') if rel.strip()]
+                    
+                    if jargon_manager.add_term(
+                        term=new_term,
+                        definition=new_definition,
+                        domain=new_domain,
+                        aliases=aliases_list,
+                        related_terms=related_list
+                    ):
+                        st.success(f"用語「{new_term}」を登録しました。")
+                        get_all_terms_cached.clear()
+                        st.rerun()
+                    else:
+                        st.error(f"用語「{new_term}」の登録に失敗しました。")
+    
+    st.markdown("---")
+
     # Search and refresh buttons
     col1, col2 = st.columns([3, 1])
     with col1:

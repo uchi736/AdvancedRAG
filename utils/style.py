@@ -57,7 +57,10 @@ STYLE = """
     .stButton > button { background: var(--accent); color: white; border: none; border-radius: 8px; padding: 0.75rem 1.5rem; font-weight: 500; transition: all 0.2s ease; } .stButton > button:hover { background: var(--accent-hover); transform: translateY(-1px); }
     .stTextInput > div > div > input, .stTextArea > div > div > textarea { background: var(--surface); border: 1px solid var(--border); color: var(--text-primary); border-radius: 8px; }
     .stTextInput > div > div > input:focus, .stTextArea > div > div > textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-light); }
-    .stFormLabel { color: var(--text-primary) !important; font-weight: 500; }
+    .stFormLabel, div[data-testid="stForm"] label {
+        color: var(--text-primary) !important;
+        font-weight: 500;
+    }
     .stTextInput input::placeholder, .stTextArea textarea::placeholder { color: var(--text-secondary) !important; }
     .stTextInput input, .stTextArea textarea, .stSelectbox > div > div > div[data-baseweb="select"] > div { color: var(--text-primary) !important; font-size: 1rem !important; }
     .stSelectbox > div > div > div { background: var(--surface); border: 1px solid var(--border); color: var(--text-primary); }
