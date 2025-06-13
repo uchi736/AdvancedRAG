@@ -18,9 +18,9 @@ def create_chains(llm, max_sql_results: int) -> dict:
 回答:"""
     )
     
-    # This chain now returns a dictionary with the answer and the source documents
-    answer_generation_chain = RunnablePassthrough.assign(
-        answer=RunnablePassthrough.assign(
+    # This chain returns the final answer string.
+    answer_generation_chain = (
+        RunnablePassthrough.assign(
             context=(lambda x: "\n\n".join(doc.page_content for doc in x["context"]))
         )
         | base_rag_prompt
