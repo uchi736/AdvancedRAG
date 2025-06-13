@@ -62,6 +62,24 @@ def create_chains(llm, max_sql_results: int) -> dict:
     )
     query_augmentation_chain = query_augmentation_prompt | llm | StrOutputParser()
 
+    # --- Reranking Chain ---
+    reranking_prompt = ChatPromptTemplate.from_template(
+        """あなたは検索結果を評価し、並べ替えるエキスパートです。
+以下のユーザーの質問と、検索によって取得されたドキュメントのリストが与えられます。
+あなたのタスクは、質問に最も関連性の高いドキュメントから順に、ドキュメントのインデックス（0から始まる番号）を並べ替えることです。
+
+ユーザーの質問: {question}
+
+ドキュメントリスト:
+{documents}
+
+関連性の高い順に並べ替えたドキュメントのインデックスを、カンマ区切りで返してください。
+例: 2,0,1,3
+
+並べ替えたインデックス:"""
+    )
+    reranking_chain = reranking_prompt | llm | StrOutputParser()
+
     # --- Text-to-SQL Chains ---
     query_detection_prompt = ChatPromptTemplate.from_template(
         """この質問はSQL分析とRAG検索のどちらが適切ですか？
@@ -120,6 +138,7 @@ SQL実行結果のプレビュー (最大 {max_preview_rows} 件表示):
         "query_expansion": query_expansion_chain,
         "jargon_extraction": jargon_extraction_chain,
         "query_augmentation": query_augmentation_chain,
+        "reranking": reranking_chain,
         "query_detection": detection_chain,
         "multi_table_sql": multi_table_sql_chain,
         "sql_answer_generation": sql_answer_generation_chain,

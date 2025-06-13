@@ -13,12 +13,16 @@ def initialize_session_state():
         st.session_state.last_query_expansion = {}
     if "last_golden_retriever" not in st.session_state:
         st.session_state.last_golden_retriever = {}
+    if "last_reranking" not in st.session_state:
+        st.session_state.last_reranking = {}
     if "use_query_expansion" not in st.session_state:
         st.session_state.use_query_expansion = False
     if "use_rag_fusion" not in st.session_state:
         st.session_state.use_rag_fusion = False
     if "use_jargon_augmentation" not in st.session_state:
         st.session_state.use_jargon_augmentation = os.getenv("ENABLE_JARGON_EXTRACTION", "true").lower() == "true"
+    if "use_reranking" not in st.session_state:
+        st.session_state.use_reranking = os.getenv("ENABLE_RERANKING", "false").lower() == "true"
     if "session_id" not in st.session_state:
         st.session_state.session_id = str(uuid.uuid4())
 
@@ -52,7 +56,8 @@ def get_rag_system():
                     embedding_model_identifier=os.getenv("EMBEDDING_MODEL_IDENTIFIER", "text-embedding-ada-002"),
                     collection_name=os.getenv("COLLECTION_NAME", "documents"),
                     final_k=int(os.getenv("FINAL_K", 5)),
-                    enable_jargon_extraction=st.session_state.use_jargon_augmentation
+                    enable_jargon_extraction=st.session_state.use_jargon_augmentation,
+                    enable_reranking=st.session_state.use_reranking
                 )
                 st.session_state.rag_system = initialize_rag_system(app_config)
                 st.toast("✅ RAGシステムがAzure OpenAIで正常に初期化されました", icon="🎉")

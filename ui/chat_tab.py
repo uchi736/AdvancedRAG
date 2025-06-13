@@ -31,13 +31,15 @@ def _render_initial_chat_view(rag):
     st.markdown('<div class="initial-input-container">', unsafe_allow_html=True)
 
     st.markdown("<h6>高度なRAG設定:</h6>", unsafe_allow_html=True)
-    opt_cols_initial = st.columns(3)
+    opt_cols_initial = st.columns(4)
     with opt_cols_initial[0]:
         use_qe_initial = st.checkbox("クエリ拡張", value=st.session_state.use_query_expansion, key="use_qe_initial_v7_tab_chat", help="質問を自動的に拡張して検索 (RRFなし)")
     with opt_cols_initial[1]:
         use_rf_initial = st.checkbox("RAG-Fusion", value=st.session_state.use_rag_fusion, key="use_rf_initial_v7_tab_chat", help="クエリ拡張とRRFで結果を統合")
     with opt_cols_initial[2]:
         use_ja_initial = st.checkbox("専門用語で補強", value=st.session_state.use_jargon_augmentation, key="use_ja_initial_v7_tab_chat", help="専門用語辞書を使って質問を補強")
+    with opt_cols_initial[3]:
+        use_rr_initial = st.checkbox("LLMリランク", value=st.session_state.use_reranking, key="use_rr_initial_v7_tab_chat", help="LLMで検索結果を並べ替え")
 
     user_input_initial = st.text_area("質問を入力:", placeholder="例：このドキュメントの要約を教えてください / 売上上位10件を表示して", height=100, key="initial_input_textarea_v7_tab_chat", label_visibility="collapsed")
 
@@ -47,7 +49,9 @@ def _render_initial_chat_view(rag):
             st.session_state.use_query_expansion = use_qe_initial
             st.session_state.use_rag_fusion = use_rf_initial
             st.session_state.use_jargon_augmentation = use_ja_initial
+            st.session_state.use_reranking = use_rr_initial
             rag.config.enable_jargon_extraction = use_ja_initial
+            rag.config.enable_reranking = use_rr_initial
             _handle_query(rag, user_input_initial, "initial_input")
             st.rerun()
             
@@ -71,13 +75,15 @@ def _render_continued_chat_view(rag):
 
         st.markdown("---")
 
-        opt_cols_chat = st.columns(3)
+        opt_cols_chat = st.columns(4)
         with opt_cols_chat[0]:
             use_qe_chat = st.checkbox("クエリ拡張", value=st.session_state.use_query_expansion, key="use_qe_chat_continued_v7_tab_chat", help="クエリ拡張 (RRFなし)")
         with opt_cols_chat[1]:
             use_rf_chat = st.checkbox("RAG-Fusion", value=st.session_state.use_rag_fusion, key="use_rf_chat_continued_v7_tab_chat", help="RAG-Fusion (拡張+RRF)")
         with opt_cols_chat[2]:
             use_ja_chat = st.checkbox("専門用語で補強", value=st.session_state.use_jargon_augmentation, key="use_ja_chat_continued_v7_tab_chat", help="専門用語辞書を使って質問を補強")
+        with opt_cols_chat[3]:
+            use_rr_chat = st.checkbox("LLMリランク", value=st.session_state.use_reranking, key="use_rr_chat_continued_v7_tab_chat", help="LLMで検索結果を並べ替え")
 
         user_input_continued = st.text_area(
             "メッセージを入力:",
@@ -92,7 +98,9 @@ def _render_continued_chat_view(rag):
                 st.session_state.use_query_expansion = use_qe_chat
                 st.session_state.use_rag_fusion = use_rf_chat
                 st.session_state.use_jargon_augmentation = use_ja_chat
+                st.session_state.use_reranking = use_rr_chat
                 rag.config.enable_jargon_extraction = use_ja_chat
+                rag.config.enable_reranking = use_rr_chat
                 _handle_query(rag, user_input_continued, "continued_chat")
                 st.rerun()
 
@@ -103,6 +111,7 @@ def _render_continued_chat_view(rag):
                 st.session_state.current_sources = []
                 st.session_state.last_query_expansion = {}
                 st.session_state.last_golden_retriever = {}
+                st.session_state.last_reranking = {}
                 st.rerun()
         with info_col:
             _render_query_info()
@@ -123,6 +132,7 @@ def _handle_query(rag, user_input, query_source):
                     "use_query_expansion": st.session_state.use_query_expansion,
                     "use_rag_fusion": st.session_state.use_rag_fusion,
                     "use_jargon_augmentation": st.session_state.use_jargon_augmentation,
+                    "use_reranking": st.session_state.use_reranking,
                     "query_source": query_source
                 }
             )
@@ -154,6 +164,7 @@ def _handle_query(rag, user_input, query_source):
             st.session_state.current_sources = response.get("sources", [])
             st.session_state.last_query_expansion = response.get("query_expansion", {})
             st.session_state.last_golden_retriever = response.get("golden_retriever", {})
+            st.session_state.last_reranking = response.get("reranking", {})
         except Exception as e:
             st.error(f"チャット処理中にエラーが発生しました: {type(e).__name__} - {e}")
 
@@ -161,18 +172,28 @@ def _render_query_info():
     """Renders information about the last query execution."""
     last_expansion = st.session_state.get("last_query_expansion", {})
     last_golden = st.session_state.get("last_golden_retriever", {})
-    
+    last_reranking = st.session_state.get("last_reranking", {})
+
+    if last_reranking and last_reranking.get("used"):
+        with st.expander("🔃 LLMリランカー詳細", expanded=False):
+            st.write("**元の順序:**")
+            st.write(last_reranking.get("original_order", []))
+            st.write("**新しい順序:**")
+            st.write(last_reranking.get("new_order", []))
+
     if last_golden and last_golden.get("enabled"):
         with st.expander("⚜️ Golden-Retriever 詳細", expanded=False):
             st.write(f"**補強されたクエリ:** `{last_golden.get('augmented_query')}`")
             st.write(f"**抽出された専門用語:** `{', '.join(last_golden.get('extracted_terms', [])) or 'なし'}`")
-    elif last_expansion and last_expansion.get("used", False):
+    
+    if last_expansion and last_expansion.get("used", False):
         with st.expander(f"📋 拡張クエリ詳細 ({last_expansion.get('strategy', 'N/A')})", expanded=False):
             queries = last_expansion.get("queries", [])
             st.caption("以下のクエリで検索しました（該当する場合）：")
             for i, q_text in enumerate(queries):
                 st.write(f"• {'**' if i == 0 else ''}{q_text}{'** (元の質問)' if i == 0 else ''}")
-    elif any(msg.get("sql_details") for msg in st.session_state.messages if msg["role"] == "assistant"):
+
+    if any(msg.get("sql_details") for msg in st.session_state.messages if msg["role"] == "assistant"):
         st.caption("SQL分析が実行されました。詳細はメッセージ内の実行結果をご確認ください。")
 
 def _render_sources():

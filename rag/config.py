@@ -52,6 +52,7 @@ class Config:
 
     # Golden-Retriever settings
     enable_jargon_extraction: bool = os.getenv("ENABLE_JARGON_EXTRACTION", "true").lower() == "true"
+    enable_reranking: bool = os.getenv("ENABLE_RERANKING", "false").lower() == "true"
     jargon_table_name: str = os.getenv("JARGON_TABLE_NAME", "jargon_dictionary")
     max_jargon_terms_per_query: int = int(os.getenv("MAX_JARGON_TERMS_PER_QUERY", 5))
     enable_doc_summarization: bool = os.getenv("ENABLE_DOC_SUMMARIZATION", "true").lower() == "true"

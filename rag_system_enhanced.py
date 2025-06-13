@@ -165,7 +165,26 @@ class RAGSystem:
         else: # Standard retrieval
             final_sources = self.retriever.invoke(retrieval_query, config=config)
 
-        # 3. Generate answer based on retrieved documents
+        # 3. Rerank documents if enabled
+        reranked_info = {"used": False, "original_order": [d.metadata.get('chunk_id') for d in final_sources]}
+        if self.config.enable_reranking and final_sources:
+            docs_for_rerank = [f"ドキュメント {i}:\n{doc.page_content}" for i, doc in enumerate(final_sources)]
+            rerank_input = {
+                "question": original_question,
+                "documents": "\n\n---\n\n".join(docs_for_rerank)
+            }
+            try:
+                reranked_indices_str = self.chains["reranking"].invoke(rerank_input, config=config)
+                reranked_indices = [int(i.strip()) for i in reranked_indices_str.split(',') if i.strip().isdigit()]
+                
+                # 順序を入れ替え
+                final_sources = [final_sources[i] for i in reranked_indices if i < len(final_sources)]
+                reranked_info.update({"used": True, "new_order": [d.metadata.get('chunk_id') for d in final_sources]})
+            except Exception as e:
+                print(f"Reranking failed: {e}")
+                reranked_info.update({"used": False, "error": str(e)})
+        
+        # 4. Generate answer based on retrieved documents
         with get_openai_callback() as cb:
             chain_output = self.chains["answer_generation"].invoke({
                 "context": final_sources,
@@ -175,11 +194,12 @@ class RAGSystem:
         
         answer = chain_output
 
-        # 4. Assemble final response
+        # 5. Assemble final response
         return {
             "answer": answer,
             "sources": final_sources,
             "query_expansion": expanded_info,
+            "reranking": reranked_info,
             "question": original_question,
             "usage": usage,
             "golden_retriever": golden_retriever_info
