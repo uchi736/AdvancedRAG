@@ -1,6 +1,6 @@
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableSequence, RunnablePassthrough
-from langchain_core.output_parsers import StrOutputParser
+from langchain_core.output_parsers import StrOutputParser, JsonOutputParser
 
 def create_chains(llm, max_sql_results: int) -> dict:
     """Creates and returns a dictionary of all LangChain runnables."""
@@ -80,9 +80,10 @@ def create_chains(llm, max_sql_results: int) -> dict:
     )
     reranking_chain = reranking_prompt | llm | StrOutputParser()
 
-    # --- Text-to-SQL Chains ---
-    query_detection_prompt = ChatPromptTemplate.from_template(
-        """この質問はSQL分析とRAG検索のどちらが適切ですか？
+    # --- Semantic Router Chain ---
+    semantic_router_prompt = ChatPromptTemplate.from_template(
+        """あなたはユーザーの質問の意図を分析し、最適な処理ルートを判断するエキスパートです。
+以下の情報に基づいて、質問を「SQL」か「RAG」のどちらにルーティングすべきかを決定してください。
 
 利用可能なデータテーブルの概要:
 {tables_info}
@@ -90,12 +91,24 @@ def create_chains(llm, max_sql_results: int) -> dict:
 ユーザーの質問: {question}
 
 判断基準:
-- SQLが適している場合: 具体的な数値データに基づく分析、集計、ランキング、フィルタリング、特定レコードの抽出など
-- RAGが適している場合: ドキュメントの内容に関する要約、説明、概念理解、自由形式の質問
+- 「SQL」ルート: 質問が、上記テーブル内のデータに対する具体的な集計、計算、フィルタリング、ランキング、または個々のレコードの検索を要求している場合。例：「売上トップ5の製品は？」「昨年の平均注文額は？」
+- 「RAG」ルート: 質問が、一般的な知識、ドキュメントの内容に関する説明、要約、概念の理解、または自由形式の対話を求めている場合。例：「このレポートの要点を教えて」「弊社のコンプライアンス方針について説明して」
 
-回答は「SQL」または「RAG」のいずれか一つのみを返してください。"""
+思考プロセスをステップバイステップで記述し、最終的な判断をJSON形式で出力してください。
+
+思考プロセス:
+1. ユーザーの質問の主要なキーワードと意図を分析します。
+2. 質問が利用可能なデータテーブルの情報を活用して解決できるか評価します。
+3. 判断基準と照らし合わせ、最も適切なルートを選択します。
+
+出力形式:
+{{
+  "route": "SQL" or "RAG",
+  "reason": "判断理由を簡潔に記述"
+}}
+"""
     )
-    detection_chain = query_detection_prompt | llm | StrOutputParser()
+    semantic_router_chain = semantic_router_prompt | llm | JsonOutputParser()
 
     multi_table_text_to_sql_prompt = ChatPromptTemplate.from_template(
         f"""あなたはPostgreSQLエキスパートです。以下に提示される複数のテーブルスキーマの中から、ユーザーの質問に答えるために最も適切と思われるテーブルを選択し、必要であればそれらのテーブル間でJOINを適切に使用して、SQLクエリを生成してください。
@@ -133,13 +146,38 @@ SQL実行結果のプレビュー (最大 {max_preview_rows} 件表示):
     )
     sql_answer_generation_chain = sql_answer_generation_prompt | llm | StrOutputParser()
 
+    # --- Final Answer Synthesis Chain ---
+    synthesis_prompt = ChatPromptTemplate.from_template(
+        """あなたは高度なAIアシスタントです。ユーザーの質問に対して、以下の2種類の検索結果が提供されました。
+1. **RAG検索結果**: ドキュメントから抽出された、関連性の高いテキスト情報。
+2. **SQL検索結果**: データベースから取得された、具体的なデータや集計結果。
+
+これらの情報を包括的に分析し、両方の結果を適切に組み合わせて、ユーザーに一つのまとまりのある、分かりやすい回答を生成してください。
+
+ユーザーの質問: {question}
+
+RAG検索結果 (ドキュメントからの抜粋):
+---
+{rag_context}
+---
+
+SQL検索結果 (データベースからのデータ):
+---
+{sql_data}
+---
+
+上記の情報を統合した最終的な回答:"""
+    )
+    synthesis_chain = synthesis_prompt | llm | StrOutputParser()
+
     return {
         "answer_generation": answer_generation_chain,
         "query_expansion": query_expansion_chain,
         "jargon_extraction": jargon_extraction_chain,
         "query_augmentation": query_augmentation_chain,
         "reranking": reranking_chain,
-        "query_detection": detection_chain,
+        "semantic_router": semantic_router_chain,
         "multi_table_sql": multi_table_sql_chain,
         "sql_answer_generation": sql_answer_generation_chain,
+        "synthesis": synthesis_chain,
     }

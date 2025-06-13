@@ -206,30 +206,64 @@ class RAGSystem:
         }
 
     def query_unified(self, question: str, **kwargs) -> Dict[str, Any]:
-        forced_mode, actual_question = (("sql", question[4:].strip()) if question.startswith("#SQL") else
-                                        ("rag", question[4:].strip()) if question.startswith("#RAG") else
-                                        (None, question))
-        
-        if forced_mode == "rag":
-            return {**self.query(actual_question, **kwargs), "query_type": "rag"}
+        """
+        Executes both RAG and Text-to-SQL searches in parallel and synthesizes
+        the results for a comprehensive answer.
+        """
+        config = kwargs.get("config")
 
+        # --- 1. Execute RAG Search ---
+        rag_results = self.query(question, **kwargs)
+        rag_context = format_docs(rag_results.get("sources", []))
+
+        # --- 2. Execute Text-to-SQL Search ---
+        sql_details = None
+        sql_data_summary = "（利用可能なデータベース情報はありません）"
         tables = self.get_data_tables()
-        if not self.config.enable_text_to_sql or not tables:
-            return {**self.query(actual_question, **kwargs), "query_type": "rag"}
 
-        if forced_mode == "sql":
-            decision = "SQL"
-        else:
-            tables_info = "\n".join([f"- {t['table_name']}: {t.get('row_count', 'N/A')} rows" for t in tables])
-            decision = self.chains["query_detection"].invoke({"question": actual_question, "tables_info": tables_info}, config=kwargs.get("config"))
+        if self.config.enable_text_to_sql and tables:
+            try:
+                schemas_info = "\n\n---\n\n".join([t['schema'] for t in tables if t.get('schema')])
+                generated_sql = self.chains["multi_table_sql"].invoke({
+                    "question": question,
+                    "schemas_info": schemas_info,
+                    "max_sql_results": self.config.max_sql_results
+                }, config=config)
+                
+                sql_details = self.sql_handler._execute_and_summarize_sql(
+                    question,
+                    self.sql_handler._extract_sql(generated_sql),
+                    config=config
+                )
+                sql_data_summary = sql_details.get("natural_language_answer", "（SQLクエリは実行されましたが、要約を生成できませんでした）")
+            except Exception as e:
+                print(f"Text-to-SQL process failed: {e}")
+                sql_data_summary = f"（SQL処理中にエラーが発生しました: {e}）"
+        
+        # --- 3. Synthesize Final Answer ---
+        final_answer = self.chains["synthesis"].invoke({
+            "question": question,
+            "rag_context": rag_context,
+            "sql_data": sql_data_summary
+        }, config=config)
 
-        if "SQL" in decision.upper():
-            schemas_info = "\n\n---\n\n".join([t['schema'] for t in tables if t.get('schema')])
-            generated_sql = self.chains["multi_table_sql"].invoke({"question": actual_question, "schemas_info": schemas_info, "max_sql_results": self.config.max_sql_results}, config=kwargs.get("config"))
-            sql_details = self.sql_handler._execute_and_summarize_sql(actual_question, self.sql_handler._extract_sql(generated_sql), config=kwargs.get("config"))
-            return {"query_type": "sql", "question": question, "answer": sql_details.get("natural_language_answer", "Error"), "sql_details": sql_details, "sources": []}
-        else:
-            return {**self.query(actual_question, **kwargs), "query_type": "rag"}
+        # --- 4. Assemble Final Response ---
+        # Combine sources from RAG and potentially add a "source" for the SQL data
+        final_sources = rag_results.get("sources", [])
+        
+        response = {
+            "answer": final_answer,
+            "sources": final_sources,
+            "question": question,
+            "query_type": "hybrid",
+            "sql_details": sql_details,
+            # Include other details from the original RAG query if needed
+            "query_expansion": rag_results.get("query_expansion"),
+            "reranking": rag_results.get("reranking"),
+            "usage": rag_results.get("usage"),
+            "golden_retriever": rag_results.get("golden_retriever")
+        }
+        return response
 
     def _combine_documents_simple(self, list_of_document_lists: List[List[Any]]) -> List[Document]:
         """A simple combination of documents, preserving order and removing duplicates."""

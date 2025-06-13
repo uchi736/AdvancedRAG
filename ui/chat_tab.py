@@ -1,5 +1,8 @@
 import streamlit as st
 import os
+import pandas as pd
+import csv
+from io import StringIO
 from langchain_core.runnables import RunnableConfig
 from typing import Dict, Any
 from utils.helpers import render_sql_result_in_chat
@@ -9,6 +12,8 @@ def render_chat_tab(rag_system):
     if not rag_system:
         st.info("🔧 RAGシステムが初期化されていません。サイドバーでAzure OpenAI APIキーを設定し、「Apply Settings」をクリックするか、データベース設定を確認してください。")
         return
+
+    _render_bulk_query_section(rag_system)
 
     has_messages = len(st.session_state.messages) > 0
     if not has_messages:
@@ -237,3 +242,85 @@ def _render_sources():
                         st.markdown(f"""<div class="full-text-container">{full_text}</div>""", unsafe_allow_html=True)
     else:
         st.info("RAG検索が実行されると、参照したソースがここに表示されます。")
+
+def _render_bulk_query_section(rag_system):
+    """Renders the section for bulk querying from a CSV file."""
+    with st.expander("一括質問モード (CSV)", expanded=False):
+        st.info("質問を記載したCSVファイルをアップロードしてください。1列目に質問を入力してください。")
+        
+        st.markdown("<h6>高度なRAG設定:</h6>", unsafe_allow_html=True)
+        opt_cols_bulk = st.columns(4)
+        with opt_cols_bulk[0]:
+            use_qe_bulk = st.checkbox("クエリ拡張", value=True, key="use_qe_bulk_v2", help="質問を自動的に拡張して検索 (RRFなし)")
+        with opt_cols_bulk[1]:
+            use_rf_bulk = st.checkbox("RAG-Fusion", value=False, key="use_rf_bulk_v2", help="クエリ拡張とRRFで結果を統合")
+        with opt_cols_bulk[2]:
+            use_ja_bulk = st.checkbox("専門用語で補強", value=True, key="use_ja_bulk_v2", help="専門用語辞書を使って質問を補強")
+        with opt_cols_bulk[3]:
+            use_rr_bulk = st.checkbox("LLMリランク", value=True, key="use_rr_bulk_v2", help="LLMで検索結果を並べ替え")
+
+        uploaded_file = st.file_uploader("CSVファイルをアップロード", type="csv", key="bulk_query_uploader")
+        
+        if uploaded_file:
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("一括処理を開始", key="start_bulk_processing"):
+                    st.session_state.bulk_processing = True
+                    st.session_state.bulk_results = []
+                    
+                    try:
+                        stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
+                        questions = [row[0] for row in csv.reader(stringio) if row]
+                        
+                        progress_bar = st.progress(0)
+                        total_questions = len(questions)
+                        
+                        for i, question in enumerate(questions):
+                            # Set config for this query
+                            rag_system.config.enable_jargon_extraction = use_ja_bulk
+                            rag_system.config.enable_reranking = use_rr_bulk
+
+                            response = rag_system.query_unified(
+                                question,
+                                use_query_expansion=use_qe_bulk,
+                                use_rag_fusion=use_rf_bulk
+                            )
+                            
+                            answer = response.get("answer", "回答なし")
+                            sources = response.get("sources", [])
+                            
+                            source_docs = ", ".join(sorted(list(set([s.metadata.get('document_id', '不明') for s in sources]))))
+                            
+                            result_row = {
+                                "質問": question,
+                                "回答": answer,
+                                "参照ソース": source_docs,
+                            }
+                            
+                            for idx, s in enumerate(sources):
+                                doc_id = s.metadata.get('document_id', '不明')
+                                chunk_id = s.metadata.get('chunk_id', f'N/A_{idx}')
+                                cell_content = f"Source: {doc_id}, Chunk ID: {chunk_id}\n---\n{s.page_content}"
+                                result_row[f"チャンク{idx+1}"] = cell_content
+
+                            st.session_state.bulk_results.append(result_row)
+                            progress_bar.progress((i + 1) / total_questions)
+                            
+                        st.success("一括処理が完了しました。")
+                        st.session_state.bulk_processing = False
+                    except Exception as e:
+                        st.error(f"処理中にエラーが発生しました: {e}")
+                        st.session_state.bulk_processing = False
+
+            if st.session_state.get("bulk_results"):
+                df = pd.DataFrame(st.session_state.bulk_results)
+                csv_data = df.to_csv(index=False).encode('utf-8')
+                with col2:
+                    st.download_button(
+                        label="結果をダウンロード",
+                        data=csv_data,
+                        file_name="bulk_query_results.csv",
+                        mime="text/csv",
+                        key="download_bulk_results"
+                    )
+                st.dataframe(df)
