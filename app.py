@@ -79,7 +79,7 @@ def main():
         render_chat_tab(rag)
     
     with tabs[1]:
-        render_dictionary_tab()
+        render_dictionary_tab(rag)
 
     with tabs[2]:
         render_data_tab(rag)

@@ -89,6 +89,29 @@ class JargonDictionaryManager:
         except Exception as e:
             print(f"Error looking up terms: {e}")
         return results
+
+    def delete_term(self, term: str) -> bool:
+        """Deletes a term from the dictionary."""
+        try:
+            engine = create_engine(self.connection_string)
+            with engine.connect() as conn:
+                conn.execute(text(f"DELETE FROM {self.table_name} WHERE term = :term"), {"term": term})
+                conn.commit()
+            return True
+        except Exception as e:
+            print(f"Error deleting term from jargon dictionary: {e}")
+            return False
+
+    def get_all_terms(self) -> List[Dict[str, Any]]:
+        """Retrieves all terms from the dictionary."""
+        engine = create_engine(self.connection_string)
+        try:
+            with engine.connect() as conn:
+                result = conn.execute(text(f"SELECT * FROM {self.table_name} ORDER BY term")).fetchall()
+                return [dict(row._mapping) for row in result]
+        except Exception as e:
+            print(f"Error getting all terms: {e}")
+            return []
     
     def bulk_import_from_csv(self, csv_path: str) -> Tuple[int, int]:
         """Bulk imports terms from a CSV file."""
