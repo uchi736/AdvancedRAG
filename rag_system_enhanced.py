@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import os
 import asyncio
-import json
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-from operator import itemgetter
 
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+
 
 try:
     import psycopg
@@ -24,7 +25,7 @@ except ModuleNotFoundError:
 
 from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings
 from langchain_community.vectorstores import PGVector, DistanceStrategy
-from langchain_core.runnables import RunnableConfig, RunnablePassthrough, RunnableLambda
+from langchain_core.runnables import RunnableConfig
 from langchain_community.callbacks.manager import get_openai_callback
 
 # --- Refactored Module Imports ---
@@ -34,11 +35,11 @@ from rag.jargon import JargonDictionaryManager
 from rag.retriever import JapaneseHybridRetriever
 from rag.ingestion import IngestionHandler
 from rag.sql_handler import SQLHandler
-from rag.chains import create_chains
+from rag.chains import create_chains, create_retrieval_chain, create_full_rag_chain
 
 load_dotenv()
 
-def format_docs(docs: List[Document]) -> str:
+def format_docs(docs: List[Any]) -> str:
     """Helper function to format documents for context."""
     if not docs:
         return "(コンテキスト無し)"
@@ -72,6 +73,11 @@ class RAGSystem:
         self.ingestion_handler = IngestionHandler(cfg, self.vector_store, self.text_processor, self.connection_string)
         self.sql_handler = SQLHandler(cfg, self.llm, self.connection_string)
 
+        # Create the modular chains
+        self.retrieval_chain = create_retrieval_chain(self.llm, self.retriever, self.jargon_manager, self.config)
+        self.rag_chain = create_full_rag_chain(self.retrieval_chain, self.llm)
+
+        # Create the remaining chains (mostly for SQL and synthesis)
         self.chains = create_chains(self.llm, cfg.max_sql_results)
         self.sql_handler.multi_table_sql_chain = self.chains["multi_table_sql"]
         self.sql_handler.sql_answer_generation_chain = self.chains["sql_answer_generation"]
@@ -79,33 +85,22 @@ class RAGSystem:
     def _init_llms_and_embeddings(self):
         cfg = self.config
         if not all([cfg.azure_openai_api_key, cfg.azure_openai_endpoint, cfg.azure_openai_chat_deployment_name, cfg.azure_openai_embedding_deployment_name]):
-            raise ValueError("Azure OpenAI API credentials are not fully configured. Please provide all required Azure settings.")
+            raise ValueError("Azure OpenAI API credentials are not fully configured.")
         
         self.llm = AzureChatOpenAI(
-            azure_endpoint=cfg.azure_openai_endpoint, 
-            api_key=cfg.azure_openai_api_key, 
-            api_version=cfg.azure_openai_api_version, 
-            azure_deployment=cfg.azure_openai_chat_deployment_name, 
-            temperature=0.7
+            azure_endpoint=cfg.azure_openai_endpoint, api_key=cfg.azure_openai_api_key, 
+            api_version=cfg.azure_openai_api_version, azure_deployment=cfg.azure_openai_chat_deployment_name, temperature=0.7
         )
         self.embeddings = AzureOpenAIEmbeddings(
-            azure_endpoint=cfg.azure_openai_endpoint, 
-            api_key=cfg.azure_openai_api_key, 
-            api_version=cfg.azure_openai_api_version, 
-            azure_deployment=cfg.azure_openai_embedding_deployment_name
+            azure_endpoint=cfg.azure_openai_endpoint, api_key=cfg.azure_openai_api_key, 
+            api_version=cfg.azure_openai_api_version, azure_deployment=cfg.azure_openai_embedding_deployment_name
         )
         print("RAGSystem initialized with Azure OpenAI.")
 
     def _init_db(self):
         engine = create_engine(self.connection_string)
         with engine.connect() as conn:
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS document_chunks (
-                    chunk_id TEXT PRIMARY KEY, collection_name TEXT, document_id TEXT,
-                    content TEXT, tokenized_content TEXT, metadata JSONB,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-            """))
+            conn.execute(text("CREATE TABLE IF NOT EXISTS document_chunks (chunk_id TEXT PRIMARY KEY, collection_name TEXT, document_id TEXT, content TEXT, tokenized_content TEXT, metadata JSONB, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_doc_chunks_coll_doc ON document_chunks(collection_name, document_id);"))
             conn.commit()
 
@@ -129,163 +124,79 @@ class RAGSystem:
         return self.sql_handler.get_chunks_by_document_id(document_id)
 
     # --- Core Query Logic ---
-    def query(self, question: str, *, use_query_expansion: bool = False, use_rag_fusion: bool = False, config: Optional[RunnableConfig] = None) -> Dict[str, Any]:
-        original_question = question
-        retrieval_query = question
-        golden_retriever_info = {"enabled": self.config.enable_jargon_extraction, "augmented_query": question}
-
-        # 1. Augment query if jargon extraction is enabled
-        if self.config.enable_jargon_extraction:
-            jargon_terms = self.chains["jargon_extraction"].invoke({"question": original_question, "max_terms": self.config.max_jargon_terms_per_query}, config=config).split('\n')
-            jargon_terms = [t.strip() for t in jargon_terms if t.strip()]
-            if jargon_terms:
-                jargon_defs = self.jargon_manager.lookup_terms(jargon_terms)
-                if jargon_defs:
-                    defs_text = "\n".join([f"- {term}: {info['definition']}" for term, info in jargon_defs.items()])
-                    retrieval_query = self.chains["query_augmentation"].invoke({"original_question": original_question, "jargon_definitions": defs_text}, config=config)
-                golden_retriever_info.update({"extracted_terms": jargon_terms, "jargon_definitions": jargon_defs, "augmented_query": retrieval_query})
-        
-        # 2. Retrieve documents based on the mode
-        expanded_info = {"used": False, "queries": [retrieval_query], "strategy": "Standard"}
-        final_sources = []
-
-        if use_rag_fusion or use_query_expansion:
-            expanded_queries = self.chains["query_expansion"].invoke({"question": retrieval_query}, config=config).split('\n')
-            expanded_queries = [q.strip() for q in expanded_queries if q.strip()]
-            
-            # Use a map to retrieve for all queries
-            doc_lists = self.retriever.batch(expanded_queries, config)
-
-            if use_rag_fusion:
-                final_sources = self._reciprocal_rank_fusion(doc_lists)
-                expanded_info.update({"used": True, "queries": expanded_queries, "strategy": "RAG-Fusion"})
-            else: # Query Expansion
-                final_sources = self._combine_documents_simple(doc_lists)
-                expanded_info.update({"used": True, "queries": expanded_queries, "strategy": "Query Expansion"})
-        else: # Standard retrieval
-            final_sources = self.retriever.invoke(retrieval_query, config=config)
-
-        # 3. Rerank documents if enabled
-        reranked_info = {"used": False, "original_order": [d.metadata.get('chunk_id') for d in final_sources]}
-        if self.config.enable_reranking and final_sources:
-            docs_for_rerank = [f"ドキュメント {i}:\n{doc.page_content}" for i, doc in enumerate(final_sources)]
-            rerank_input = {
-                "question": original_question,
-                "documents": "\n\n---\n\n".join(docs_for_rerank)
-            }
-            try:
-                reranked_indices_str = self.chains["reranking"].invoke(rerank_input, config=config)
-                reranked_indices = [int(i.strip()) for i in reranked_indices_str.split(',') if i.strip().isdigit()]
-                
-                # 順序を入れ替え
-                final_sources = [final_sources[i] for i in reranked_indices if i < len(final_sources)]
-                reranked_info.update({"used": True, "new_order": [d.metadata.get('chunk_id') for d in final_sources]})
-            except Exception as e:
-                print(f"Reranking failed: {e}")
-                reranked_info.update({"used": False, "error": str(e)})
-        
-        # 4. Generate answer based on retrieved documents
+    def query(self, question: str, *, use_query_expansion: bool = False, use_rag_fusion: bool = False, use_jargon_augmentation: bool = True, use_reranking: bool = True, search_type: str = "ハイブリッド検索", config: Optional[RunnableConfig] = None) -> Dict[str, Any]:
+        """Executes the main RAG chain for a standard RAG query."""
         with get_openai_callback() as cb:
-            chain_output = self.chains["answer_generation"].invoke({
-                "context": final_sources,
-                "question": original_question
-            }, config=config)
+            chain_input = {
+                "question": question, "use_query_expansion": use_query_expansion,
+                "use_rag_fusion": use_rag_fusion, "use_jargon_augmentation": use_jargon_augmentation,
+                "use_reranking": use_reranking, "config": config, "search_type": search_type
+            }
+            result = self.rag_chain.invoke(chain_input, config=config)
             usage = {"total_tokens": cb.total_tokens, "cost": cb.total_cost}
-        
-        answer = chain_output
-
-        # 5. Assemble final response
         return {
-            "answer": answer,
-            "sources": final_sources,
-            "query_expansion": expanded_info,
-            "reranking": reranked_info,
-            "question": original_question,
-            "usage": usage,
-            "golden_retriever": golden_retriever_info
+            "answer": result.get("answer", "回答を生成できませんでした。"), "sources": result.get("documents", []),
+            "question": question, "usage": usage, "query_expansion": {}, "reranking": {}, "golden_retriever": {}
         }
 
     def query_unified(self, question: str, **kwargs) -> Dict[str, Any]:
-        """
-        Executes both RAG and Text-to-SQL searches in parallel and synthesizes
-        the results for a comprehensive answer.
-        """
+        """Executes RAG retrieval and SQL search, then synthesizes the results."""
         config = kwargs.get("config")
-
-        # --- 1. Execute RAG Search ---
-        rag_results = self.query(question, **kwargs)
-        rag_context = format_docs(rag_results.get("sources", []))
-
-        # --- 2. Execute Text-to-SQL Search ---
+        
+        # 1. Execute RAG Document Retrieval
+        chain_input = {
+            "question": question, "use_query_expansion": kwargs.get("use_query_expansion"),
+            "use_rag_fusion": kwargs.get("use_rag_fusion"), "use_jargon_augmentation": kwargs.get("use_jargon_augmentation"),
+            "use_reranking": kwargs.get("use_reranking"), "config": config, "search_type": kwargs.get("search_type")
+        }
+        with get_openai_callback() as cb_rag:
+            # We call the full chain here to get a complete trace, even if we only use parts of the output.
+            rag_results = self.rag_chain.invoke(chain_input, config=config)
+        
+        rag_context = format_docs(rag_results.get("documents", []))
+        
+        # 2. Execute Text-to-SQL Search
         sql_details = None
         sql_data_summary = "（利用可能なデータベース情報はありません）"
         tables = self.get_data_tables()
+        cb_sql_total = 0
+        cb_sql_cost = 0.0
 
         if self.config.enable_text_to_sql and tables:
             try:
-                schemas_info = "\n\n---\n\n".join([t['schema'] for t in tables if t.get('schema')])
-                generated_sql = self.chains["multi_table_sql"].invoke({
-                    "question": question,
-                    "schemas_info": schemas_info,
-                    "max_sql_results": self.config.max_sql_results
-                }, config=config)
-                
-                sql_details = self.sql_handler._execute_and_summarize_sql(
-                    question,
-                    self.sql_handler._extract_sql(generated_sql),
-                    config=config
-                )
-                sql_data_summary = sql_details.get("natural_language_answer", "（SQLクエリは実行されましたが、要約を生成できませんでした）")
+                with get_openai_callback() as cb_sql:
+                    schemas_info = "\n\n---\n\n".join([t['schema'] for t in tables if t.get('schema')])
+                    generated_sql = self.chains["multi_table_sql"].invoke({"question": question, "schemas_info": schemas_info, "max_sql_results": self.config.max_sql_results}, config=config)
+                    sql_details = self.sql_handler._execute_and_summarize_sql(question, self.sql_handler._extract_sql(generated_sql), config=config)
+                    sql_data_summary = sql_details.get("natural_language_answer", "（SQLクエリは実行されましたが、要約を生成できませんでした）")
+                cb_sql_total = cb_sql.total_tokens
+                cb_sql_cost = cb_sql.total_cost
             except Exception as e:
                 print(f"Text-to-SQL process failed: {e}")
                 sql_data_summary = f"（SQL処理中にエラーが発生しました: {e}）"
         
-        # --- 3. Synthesize Final Answer ---
-        final_answer = self.chains["synthesis"].invoke({
-            "question": question,
-            "rag_context": rag_context,
-            "sql_data": sql_data_summary
-        }, config=config)
+        # 3. Synthesize Final Answer
+        # If SQL search was not productive, just return the original RAG result.
+        if not sql_details or "error" in sql_details:
+             return {
+                "answer": rag_results.get("answer", "回答が見つかりませんでした。"),
+                "sources": rag_results.get("documents", []),
+                "question": question,
+                "usage": {"total_tokens": cb_rag.total_tokens, "cost": cb_rag.total_cost}
+            }
 
-        # --- 4. Assemble Final Response ---
-        # Combine sources from RAG and potentially add a "source" for the SQL data
-        final_sources = rag_results.get("sources", [])
+        # Otherwise, synthesize both results
+        with get_openai_callback() as cb_synth:
+            final_answer = self.chains["synthesis"].invoke({"question": question, "rag_context": rag_context, "sql_data": sql_data_summary}, config=config)
         
-        response = {
-            "answer": final_answer,
-            "sources": final_sources,
-            "question": question,
-            "query_type": "hybrid",
-            "sql_details": sql_details,
-            # Include other details from the original RAG query if needed
-            "query_expansion": rag_results.get("query_expansion"),
-            "reranking": rag_results.get("reranking"),
-            "usage": rag_results.get("usage"),
-            "golden_retriever": rag_results.get("golden_retriever")
+        total_tokens = cb_rag.total_tokens + cb_sql_total + cb_synth.total_tokens
+        total_cost = cb_rag.total_cost + cb_sql_cost + cb_synth.total_cost
+        
+        return {
+            "answer": final_answer, "sources": rag_results.get("documents", []), "question": question,
+            "query_type": "hybrid", "sql_details": sql_details, "usage": {"total_tokens": total_tokens, "cost": total_cost},
+            "query_expansion": {}, "reranking": {}, "golden_retriever": {}
         }
-        return response
-
-    def _combine_documents_simple(self, list_of_document_lists: List[List[Any]]) -> List[Document]:
-        """A simple combination of documents, preserving order and removing duplicates."""
-        all_docs: List[Document] = []
-        seen_chunk_ids = set()
-        for doc_list in list_of_document_lists:
-            for doc in doc_list:
-                chunk_id = doc.metadata.get('chunk_id', '')
-                if chunk_id and chunk_id not in seen_chunk_ids:
-                    seen_chunk_ids.add(chunk_id)
-                    all_docs.append(doc)
-        return all_docs[:self.config.final_k]
-
-    def _reciprocal_rank_fusion(self, list_of_document_lists: List[List[Any]]) -> List[Document]:
-        fused_scores, doc_map = {}, {}
-        for doc_list in list_of_document_lists:
-            for rank, doc in enumerate(doc_list):
-                doc_id = doc.metadata.get("chunk_id")
-                if not doc_id: continue
-                doc_map[doc_id] = doc
-                fused_scores[doc_id] = fused_scores.get(doc_id, 0) + (1.0 / (self.config.rrf_k_for_fusion + rank + 1))
-        return [doc_map[cid] for cid in sorted(fused_scores, key=fused_scores.get, reverse=True)][:self.config.final_k]
 
     def extract_terms(self, input_dir: str | Path, output_json: str | Path) -> None:
         from scripts.term_extractor_embeding import run_pipeline as term_pipeline

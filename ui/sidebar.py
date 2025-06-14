@@ -30,6 +30,15 @@ def render_sidebar(rag_system, env_defaults):
         
         st.info("すべての設定は「詳細設定」タブで行えます。")
 
+        # Add search type selection
+        st.session_state.search_type = st.radio(
+            "検索タイプを選択",
+            ('ハイブリッド検索', 'ベクトル検索'),
+            index=0 if st.session_state.get('search_type', 'ハイブリッド検索') == 'ハイブリッド検索' else 1,
+            key='search_type_radio'
+        )
+
+
 def render_langsmith_info():
     """Renders LangSmith tracing info in the sidebar."""
     langsmith_api_key = os.getenv("LANGCHAIN_API_KEY")
