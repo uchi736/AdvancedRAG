@@ -55,8 +55,6 @@ def _render_initial_chat_view(rag):
             st.session_state.use_rag_fusion = use_rf_initial
             st.session_state.use_jargon_augmentation = use_ja_initial
             st.session_state.use_reranking = use_rr_initial
-            rag.config.enable_jargon_extraction = use_ja_initial
-            rag.config.enable_reranking = use_rr_initial
             _handle_query(rag, user_input_initial, "initial_input")
             st.rerun()
             
@@ -104,8 +102,6 @@ def _render_continued_chat_view(rag):
                 st.session_state.use_rag_fusion = use_rf_chat
                 st.session_state.use_jargon_augmentation = use_ja_chat
                 st.session_state.use_reranking = use_rr_chat
-                rag.config.enable_jargon_extraction = use_ja_chat
-                rag.config.enable_reranking = use_rr_chat
                 _handle_query(rag, user_input_continued, "continued_chat")
                 st.rerun()
 
@@ -126,6 +122,10 @@ def _render_continued_chat_view(rag):
 
 def _handle_query(rag, user_input, query_source):
     """Handles the query logic and updates session state."""
+    # Guard against multiple executions for the same message
+    if st.session_state.get(f"query_processed_{len(st.session_state.messages)}", False):
+        return
+
     with st.spinner("考え中..."):
         try:
             trace_config = RunnableConfig(
@@ -141,28 +141,21 @@ def _handle_query(rag, user_input, query_source):
                     "query_source": query_source
                 }
             )
-            if hasattr(rag, 'query_unified'):
-                response = rag.query_unified(
-                    user_input,
-                    use_query_expansion=st.session_state.use_query_expansion,
-                    use_rag_fusion=st.session_state.use_rag_fusion,
-                    config=trace_config
-                )
-            else:
-                st.warning("警告: `query_unified` メソッドが見つかりません。標準の `query` メソッドを使用します。SQL自動判別は機能しません。")
-                response = rag.query(
-                    user_input,
-                    use_query_expansion=st.session_state.use_query_expansion,
-                    use_rag_fusion=st.session_state.use_rag_fusion,
-                    config=trace_config
-                )
+            
+            response = rag.query_unified(
+                user_input,
+                use_query_expansion=st.session_state.use_query_expansion,
+                use_rag_fusion=st.session_state.use_rag_fusion,
+                use_jargon_augmentation=st.session_state.use_jargon_augmentation,
+                use_reranking=st.session_state.use_reranking,
+                search_type=st.session_state.get('search_type', 'ハイブリッド検索'),
+                config=trace_config
+            )
 
             answer = response.get("answer", "申し訳ございません。回答を生成できませんでした。")
             message_data: Dict[str, Any] = {"role": "assistant", "content": answer}
 
-            if response.get("query_type") == "sql" and response.get("sql_details"):
-                message_data["sql_details"] = response["sql_details"]
-            elif response.get("sql_details"):
+            if response.get("sql_details"):
                 message_data["sql_details"] = response["sql_details"]
 
             st.session_state.messages.append(message_data)
@@ -170,36 +163,16 @@ def _handle_query(rag, user_input, query_source):
             st.session_state.last_query_expansion = response.get("query_expansion", {})
             st.session_state.last_golden_retriever = response.get("golden_retriever", {})
             st.session_state.last_reranking = response.get("reranking", {})
+            
+            # Mark this query as processed
+            st.session_state[f"query_processed_{len(st.session_state.messages)}"] = True
+            
         except Exception as e:
             st.error(f"チャット処理中にエラーが発生しました: {type(e).__name__} - {e}")
 
 def _render_query_info():
     """Renders information about the last query execution."""
-    last_expansion = st.session_state.get("last_query_expansion", {})
-    last_golden = st.session_state.get("last_golden_retriever", {})
-    last_reranking = st.session_state.get("last_reranking", {})
-
-    if last_reranking and last_reranking.get("used"):
-        with st.expander("🔃 LLMリランカー詳細", expanded=False):
-            st.write("**元の順序:**")
-            st.write(last_reranking.get("original_order", []))
-            st.write("**新しい順序:**")
-            st.write(last_reranking.get("new_order", []))
-
-    if last_golden and last_golden.get("enabled"):
-        with st.expander("⚜️ Golden-Retriever 詳細", expanded=False):
-            st.write(f"**補強されたクエリ:** `{last_golden.get('augmented_query')}`")
-            st.write(f"**抽出された専門用語:** `{', '.join(last_golden.get('extracted_terms', [])) or 'なし'}`")
-    
-    if last_expansion and last_expansion.get("used", False):
-        with st.expander(f"📋 拡張クエリ詳細 ({last_expansion.get('strategy', 'N/A')})", expanded=False):
-            queries = last_expansion.get("queries", [])
-            st.caption("以下のクエリで検索しました（該当する場合）：")
-            for i, q_text in enumerate(queries):
-                st.write(f"• {'**' if i == 0 else ''}{q_text}{'** (元の質問)' if i == 0 else ''}")
-
-    if any(msg.get("sql_details") for msg in st.session_state.messages if msg["role"] == "assistant"):
-        st.caption("SQL分析が実行されました。詳細はメッセージ内の実行結果をご確認ください。")
+    st.caption("クエリの詳細はLangSmithで確認できます。")
 
 def _render_sources():
     """Renders the source documents for the last response."""
@@ -227,7 +200,6 @@ def _render_sources():
                     else:
                         st.warning("画像ファイルが見つかりませんでした。")
                 else:
-                    # Standard text source
                     excerpt = source.page_content[:200] + "..." if len(source.page_content) > 200 else source.page_content
                     st.markdown(f"""<div class="source-excerpt" style="margin-bottom: 1rem;">{excerpt}</div>""", unsafe_allow_html=True)
                     
@@ -276,14 +248,13 @@ def _render_bulk_query_section(rag_system):
                         total_questions = len(questions)
                         
                         for i, question in enumerate(questions):
-                            # Set config for this query
-                            rag_system.config.enable_jargon_extraction = use_ja_bulk
-                            rag_system.config.enable_reranking = use_rr_bulk
-
                             response = rag_system.query_unified(
                                 question,
                                 use_query_expansion=use_qe_bulk,
-                                use_rag_fusion=use_rf_bulk
+                                use_rag_fusion=use_rf_bulk,
+                                use_jargon_augmentation=use_ja_bulk,
+                                use_reranking=use_rr_bulk,
+                                search_type=st.session_state.get('search_type', 'ハイブリッド検索')
                             )
                             
                             answer = response.get("answer", "回答なし")

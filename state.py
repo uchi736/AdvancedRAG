@@ -23,6 +23,8 @@ def initialize_session_state():
         st.session_state.use_jargon_augmentation = os.getenv("ENABLE_JARGON_EXTRACTION", "true").lower() == "true"
     if "use_reranking" not in st.session_state:
         st.session_state.use_reranking = os.getenv("ENABLE_RERANKING", "false").lower() == "true"
+    if "search_type" not in st.session_state:
+        st.session_state.search_type = "ハイブリッド検索"
     if "session_id" not in st.session_state:
         st.session_state.session_id = str(uuid.uuid4())
 

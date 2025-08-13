@@ -21,6 +21,7 @@ class JapaneseHybridRetriever(BaseRetriever):
     connection_string: str
     config_params: Config
     text_processor: JapaneseTextProcessor
+    search_type: str = "ハイブリッド検索"
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -151,15 +152,19 @@ class JapaneseHybridRetriever(BaseRetriever):
 
     def _get_relevant_documents(self, query: str, *, run_manager: Optional[CallbackManagerForRetrieverRun] = None, **kwargs: Any) -> List[Document]:
         config = kwargs.get("config")
-        vres = self._vector_search(query, config=config)
-        kres = self._keyword_search(query, config=config)
         
-        retrieved_docs = self._reciprocal_rank_fusion_hybrid(vres, kres)
-        
+        if self.search_type == 'ベクトル検索':
+            vres = self._vector_search(query, config=config)
+            retrieved_docs = [doc for doc, score in vres]
+        else: # Hybrid search
+            vres = self._vector_search(query, config=config)
+            kres = self._keyword_search(query, config=config)
+            retrieved_docs = self._reciprocal_rank_fusion_hybrid(vres, kres)
+
         if self.config_params.enable_parent_child_chunking:
             return self._fetch_parent_chunks(retrieved_docs)
         
-        return retrieved_docs
+        return retrieved_docs[:self.config_params.final_k]
 
     async def _aget_relevant_documents(self, query: str, *, run_manager: Optional[CallbackManagerForRetrieverRun] = None, **kwargs: Any) -> List[Document]:
         # For simplicity, using the sync version. For production, implement async I/O.
