@@ -30,6 +30,7 @@ try:
     from ui.data_tab import render_data_tab
     from ui.documents_tab import render_documents_tab
     from ui.settings_tab import render_settings_tab
+    from ui.evaluation_tab import render_evaluation_tab
 except ImportError as e:
     st.error(f"モジュールのインポートに失敗しました: {e}")
     st.error("必要なファイルが正しい場所にあるか確認してください。")
@@ -72,7 +73,7 @@ def main():
     """, unsafe_allow_html=True)
 
     # ── Main Tabs ──────────────────────────────────────────────────────────
-    tab_titles = ["💬 Chat", "📖 Dictionary", "🗃️ Data", "📁 Documents", "⚙️ Settings"]
+    tab_titles = ["💬 Chat", "📖 Dictionary", "🗃️ Data", "📁 Documents", "🎯 Evaluation", "⚙️ Settings"]
     tabs = st.tabs(tab_titles)
 
     with tabs[0]:
@@ -88,6 +89,9 @@ def main():
         render_documents_tab(rag)
 
     with tabs[4]:
+        render_evaluation_tab(rag)
+
+    with tabs[5]:
         render_settings_tab(rag, ENV_DEFAULTS)
 
 if __name__ == "__main__":

@@ -218,7 +218,7 @@ def _render_sources():
 def _render_bulk_query_section(rag_system):
     """Renders the section for bulk querying from a CSV file."""
     with st.expander("一括質問モード (CSV)", expanded=False):
-        st.info("質問を記載したCSVファイルをアップロードしてください。1列目に質問を入力してください。")
+        st.info("質問と想定引用元を記載したCSVファイルをアップロードしてください。\n形式: 質問, 想定の引用元1, 想定の引用元2, 想定の引用元3...")
         
         st.markdown("<h6>高度なRAG設定:</h6>", unsafe_allow_html=True)
         opt_cols_bulk = st.columns(4)
@@ -242,12 +242,26 @@ def _render_bulk_query_section(rag_system):
                     
                     try:
                         stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
-                        questions = [row[0] for row in csv.reader(stringio) if row]
+                        csv_reader = csv.reader(stringio)
+                        rows = [row for row in csv_reader if row]
                         
                         progress_bar = st.progress(0)
-                        total_questions = len(questions)
+                        total_questions = len(rows)
                         
-                        for i, question in enumerate(questions):
+                        for i, row in enumerate(rows):
+                            if not row:  # Skip empty rows
+                                continue
+                                
+                            question = row[0] if len(row) > 0 else ""
+                            if not question:
+                                continue
+                            
+                            # Extract expected sources (columns 1, 2, 3, ...)
+                            expected_sources = []
+                            for j in range(1, len(row)):
+                                if row[j].strip():  # Non-empty expected source
+                                    expected_sources.append(row[j].strip())
+                            
                             response = rag_system.query_unified(
                                 question,
                                 use_query_expansion=use_qe_bulk,
@@ -268,6 +282,11 @@ def _render_bulk_query_section(rag_system):
                                 "参照ソース": source_docs,
                             }
                             
+                            # Add expected sources to the result
+                            for idx, expected_source in enumerate(expected_sources):
+                                result_row[f"想定の引用元{idx+1}"] = expected_source
+                            
+                            # Add retrieved chunks
                             for idx, s in enumerate(sources):
                                 doc_id = s.metadata.get('document_id', '不明')
                                 chunk_id = s.metadata.get('chunk_id', f'N/A_{idx}')
