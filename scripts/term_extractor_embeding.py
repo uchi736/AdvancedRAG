@@ -71,7 +71,7 @@ if os.getenv("LANGCHAIN_TRACING_V2", "").lower() == "true":
         logger.info(f"LangSmith tracing enabled - Project: {os.getenv('LANGCHAIN_PROJECT', 'default')}")
 
 # ── SudachiPy Setup ───────────────────────────────
-sudachi_mode = tokenizer.Tokenizer.SplitMode.A
+sudachi_mode = tokenizer.Tokenizer.SplitMode.C  # Mode.Cで詳細な形態素解析
 
 # ── Embeddings Setup ──────────────────────────────
 embeddings = AzureOpenAIEmbeddings(
@@ -110,26 +110,67 @@ class VectorStore:
             await loop.run_in_executor(pool, self._sync_initialize, chunks, chunk_ids)
     
     async def search_similar_chunks(self, query_text: str, current_chunk_id: str, n_results: int = 3) -> str:
-        """類似チャンクを検索して関連文脈として返す"""
+        """改良版：より関連性の高い文脈を取得"""
         if not self.vector_store:
             return "関連情報なし"
         
         try:
+            # クエリを重要な部分に絞る（最初と最後の文を使用）
+            sentences = query_text.split('。')
+            if len(sentences) > 3:
+                # 最初の2文と最後の1文を結合してクエリとする
+                query = '。'.join(sentences[:2] + [sentences[-1]])
+            else:
+                query = query_text[:1000]  # 最大1000文字に制限
+            
+            # 類似度検索（より多く取得して精選）
             results_with_scores = await self.vector_store.asimilarity_search_with_score(
-                query=query_text,
-                k=n_results + 1
+                query=query,
+                k=n_results * 2  # 2倍取得してフィルタリング
             )
             
+            # スコアと内容の両方で選別
             related_contexts = []
+            seen_contents = set()
+            
+            # 動的閾値の計算（上位スコアの平均値）
+            if results_with_scores:
+                top_scores = [score for _, score in results_with_scores[:3]]
+                if top_scores:
+                    dynamic_threshold = sum(top_scores) / len(top_scores) * 0.7  # 上位平均の70%
+                else:
+                    dynamic_threshold = 0.7
+            else:
+                dynamic_threshold = 0.7
+            
             for doc, score in results_with_scores:
+                # 自身のチャンクは除外
                 if doc.metadata.get("id") == current_chunk_id:
                     continue
-                if score > 0.7:
-                    related_contexts.append(f"[関連文脈 (類似度: {score:.2f})]\n{doc.page_content}")
+                
+                # 動的閾値でフィルタリング
+                if score < dynamic_threshold:
+                    continue
+                
+                # 内容の重複チェック（最初の200文字でハッシュ）
+                content_hash = hash(doc.page_content[:200])
+                if content_hash in seen_contents:
+                    continue
+                seen_contents.add(content_hash)
+                
+                related_contexts.append((doc.page_content, score))
+                
                 if len(related_contexts) >= n_results:
                     break
             
-            return "\n\n".join(related_contexts) if related_contexts else "関連情報なし"
+            # スコア順に整形して返す
+            if related_contexts:
+                return "\n\n".join([
+                    f"[関連文脈 {i+1} (類似度: {score:.2f})]\n{content[:500]}"  # 500文字に制限
+                    for i, (content, score) in enumerate(related_contexts)
+                ])
+            else:
+                return "関連情報なし"
             
         except Exception as e:
             logger.error(f"Error searching similar chunks: {e}")
@@ -164,30 +205,57 @@ json_parser = JsonOutputParser(pydantic_object=TermList)
 
 # ── Prompts ───────────────────────────────────────
 validation_prompt = ChatPromptTemplate.from_messages([
-    ("system", """あなたは、提供されたテキストの文脈と候補リストを基に、専門用語を厳密に検証する専門家です。
-候補リストの中から、与えられたテキストの文脈において専門用語として成立するものだけを選び出してください。
-選んだ用語について、定義、類義語、カテゴリをJSON形式で返してください。
-**重要：候補リストに存在しない用語を新たに追加してはいけません。**
+    ("system", """あなたは専門分野の用語抽出専門家です。
 
-関連する文脈情報も提供される場合は、それを参考にして：
-- より正確な定義を作成
-- 類義語を発見
-- 適切なカテゴリ分類
-を行ってください。
+【専門用語の判定基準】
+1. ドメイン固有性：その分野でのみ、または特別な意味で使われる
+2. 概念の複合性：複数の概念が結合して新しい意味を形成している
+3. 定義の必要性：一般の人には説明が必要な概念である
+4. 文脈での重要性：文書の主題理解に不可欠である
 
-一般的すぎる単語（例：システム、データ、情報、処理、管理）は除外し、その分野特有の専門用語のみを選択してください。
+【類義語・関連語の判定基準】
+1. 表記違い：同じ概念の異なる表現（例：医薬品/薬品、品質管理/QC）
+2. 略語と正式名称：（例：GMP/適正製造規範、API/原薬）
+3. 上位・下位概念：（例：製造設備/製造装置、試験/検査）
+4. 同じカテゴリの関連語：（例：原薬/添加剤/賦形剤）
+
+【必ず除外すべき用語】
+- 一般的すぎる単語：システム、データ、情報、処理、管理、方法、状態、結果、目的、対象、内容
+- 単純な動作や状態：実施、確認、作成、使用、記録、設定、表示、入力、出力
+- 文脈で専門的意味を持たない一般名詞
+- 単なる数量表現や時間表現
+
+【抽出ルール】
+- 候補リストにない用語は絶対に追加しない
+- 類義語は正確に識別し、最も一般的な表記を見出し語とする
+- 検出された関連語候補を参考に、synonymsフィールドに適切に設定する
+- 定義は30-50字で、その分野の初学者にも理解できる表現にする
+- カテゴリは以下から選択：「規制」「製造」「品質」「技術」「管理」「安全」「分析」「その他」
+
+【重要度評価】
+各候補について以下の観点で評価：
+- 文書内での出現頻度と分布
+- 他の専門用語との共起関係
+- 文書の主題との関連性
 
 {format_instructions}"""),
-    ("user", """以下のテキストと候補リストを参考に、専門用語をJSON形式で返してください。
+    ("user", """以下の情報から専門用語を厳密に選定してください。
 
-## テキスト本文:
+## 分析対象テキスト:
 {text}
 
-## 関連する文脈情報:
+## 関連文脈（参考情報）:
 {related_contexts}
 
-## 候補リスト:
+## 候補リスト（この中からのみ選択）:
 {candidates}
+
+## 関連語候補（自動検出）:
+{synonym_hints}
+
+各候補について、上記の判定基準に照らして専門用語かどうかを判断し、
+関連語候補も参考にしながら、該当するもののみをJSON形式で出力してください。
+特に、関連語候補に含まれる語は積極的にsynonymsフィールドに含めてください。
 """),
 ]).partial(format_instructions=json_parser.get_format_instructions())
 
@@ -239,42 +307,410 @@ def split_documents(docs: List[Document]) -> List[str]:
     logger.info(f"Split into {len(chunks)} chunks")
     return chunks
 
-# ── Candidate Generation Function ─────────────────
-def generate_candidates_from_chunk(text: str) -> List[str]:
-    """SudachiPyとN-gramでチャンクから候補語を生成する"""
+# ── Domain Knowledge & Scoring ─────────────────
+import math
+from collections import defaultdict, Counter
+from typing import Tuple
+from difflib import SequenceMatcher
+
+# ドメイン特化型キーワード辞書
+DOMAIN_KEYWORDS = {
+    "医薬": ["品", "部外品", "製剤", "原薬", "添加剤", "成分", "薬効", "薬理", "薬物"],
+    "製造": ["管理", "工程", "バリデーション", "設備", "施設", "製法", "品質", "検証"],
+    "品質": ["管理", "保証", "試験", "規格", "基準", "標準", "適合", "検査"],
+    "規制": ["要件", "申請", "承認", "届出", "査察", "法令", "通知", "ガイドライン"],
+    "安全": ["性", "評価", "リスク", "毒性", "副作用", "有害", "事象"],
+    "技術": ["分析", "方法", "手法", "システム", "プロセス", "機器", "装置"],
+}
+
+# 除外すべき一般語
+STOPWORDS = {
+    "こと", "もの", "ため", "場合", "とき", "ところ", "方法", 
+    "状態", "結果", "目的", "対象", "内容", "情報", "データ",
+    "システム", "プロセス", "サービス", "ソフトウェア",
+    "確認", "実施", "作成", "使用", "管理", "処理", "記録"
+}
+
+class TermScorer:
+    """高度な専門用語スコアリング"""
+    
+    @staticmethod
+    def calculate_c_value(candidates_freq: Dict[str, int]) -> Dict[str, float]:
+        """
+        C値を計算
+        C-value(a) = log2|a| × (freq(a) - (1/|Ta|) × Σb∈Ta freq(b))
+        """
+        c_values = {}
+        
+        for candidate, freq in candidates_freq.items():
+            # 候補語の長さ（文字数を使用）
+            length = len(candidate)
+            
+            # より長い候補語を探す
+            longer_terms = []
+            for other_candidate in candidates_freq:
+                if other_candidate != candidate and candidate in other_candidate:
+                    longer_terms.append(other_candidate)
+            
+            # C値を計算
+            if not longer_terms:
+                c_value = math.log2(length) * freq if length > 1 else freq
+            else:
+                sum_freq = sum(candidates_freq[term] for term in longer_terms)
+                t_a = len(longer_terms)
+                c_value = math.log2(length) * (freq - sum_freq / t_a) if length > 1 else (freq - sum_freq / t_a)
+            
+            c_values[candidate] = max(c_value, 0)  # 負の値を0にクリップ
+        
+        return c_values
+    
+    @staticmethod
+    def calculate_distribution_score(positions: List[int], doc_length: int) -> float:
+        """文書内分布スコア（均等分布ほど高スコア）"""
+        if len(positions) <= 1:
+            return 0.5
+        
+        # 位置の標準偏差を計算
+        mean_pos = sum(positions) / len(positions)
+        variance = sum((p - mean_pos) ** 2 for p in positions) / len(positions)
+        std_dev = math.sqrt(variance)
+        
+        # 理想的な均等分布との差を評価
+        ideal_gap = doc_length / (len(positions) + 1)
+        distribution_score = 1.0 / (1.0 + std_dev / ideal_gap)
+        
+        return distribution_score
+    
+    @staticmethod
+    def calculate_position_score(first_pos: int, doc_length: int) -> float:
+        """初出位置スコア（文書前半ほど高スコア）"""
+        return 1.0 - (first_pos / doc_length) * 0.5
+    
+    @staticmethod
+    def calculate_cooccurrence_score(candidate: str, noun_phrases: List[List[str]]) -> float:
+        """共起関係スコア"""
+        score = 0.0
+        
+        for phrase in noun_phrases:
+            phrase_str = ''.join(phrase)
+            if candidate in phrase_str:
+                # ドメインキーワードとの共起をチェック
+                for domain, keywords in DOMAIN_KEYWORDS.items():
+                    for keyword in keywords:
+                        if keyword in phrase_str and keyword != candidate:
+                            score += 1.5
+                            break
+        
+        return min(score, 10.0)  # 最大10点
+
+class SynonymDetector:
+    """類義語・関連語の高度な検出"""
+    
+    @staticmethod
+    def find_synonyms(candidates: List[str], noun_phrases: List[List[Dict]]) -> Dict[str, List[str]]:
+        """候補語から類義語・関連語を検出"""
+        synonyms = defaultdict(set)
+        
+        # 1. 部分文字列関係の検出（包含関係）
+        for i, cand1 in enumerate(candidates):
+            for cand2 in candidates[i+1:]:
+                # 片方が他方を含む場合（完全一致は除く）
+                if cand1 != cand2:
+                    if cand1 in cand2:
+                        # 短い方が長い方の中核概念の可能性
+                        synonyms[cand2].add(cand1)
+                    elif cand2 in cand1:
+                        synonyms[cand1].add(cand2)
+        
+        # 2. 同じ文脈での共起関係
+        cooccurrence_map = defaultdict(set)
+        window_size = 5  # 前後5語以内を文脈とする
+        
+        for phrase in noun_phrases:
+            surfaces = [t.get('surface', '') if isinstance(t, dict) else str(t) for t in phrase]
+            phrase_str = ''.join(surfaces)
+            
+            # フレーズ内で共起する候補語を記録
+            occurring_cands = [c for c in candidates if c in phrase_str]
+            for cand1 in occurring_cands:
+                for cand2 in occurring_cands:
+                    if cand1 != cand2:
+                        cooccurrence_map[cand1].add(cand2)
+        
+        # 共起頻度が高い語を関連語として追加
+        for cand, related in cooccurrence_map.items():
+            if len(related) >= 2:  # 2回以上共起
+                synonyms[cand].update(related)
+        
+        # 3. 編集距離による類似語検出
+        for i, cand1 in enumerate(candidates):
+            for cand2 in candidates[i+1:]:
+                if cand1 != cand2:
+                    similarity = SequenceMatcher(None, cand1, cand2).ratio()
+                    
+                    # 高い類似度（70-95%）の語を関連語とする
+                    if 0.7 < similarity < 0.95:
+                        synonyms[cand1].add(cand2)
+                        synonyms[cand2].add(cand1)
+        
+        # 4. 語幹・語尾パターンによる関連語検出
+        stem_groups = defaultdict(list)
+        suffix_patterns = ['管理', 'システム', '装置', '機器', '設備', '工程', '方法', '技術']
+        
+        for cand in candidates:
+            # 語幹グループ（最初の2-3文字）
+            if len(cand) >= 3:
+                stem = cand[:3]
+                stem_groups[stem].append(cand)
+            
+            # 語尾パターンマッチング
+            for suffix in suffix_patterns:
+                if cand.endswith(suffix) and len(cand) > len(suffix):
+                    base = cand[:-len(suffix)]
+                    # 同じベースを持つ他の候補を探す
+                    for other_cand in candidates:
+                        if other_cand != cand and other_cand.startswith(base):
+                            synonyms[cand].add(other_cand)
+        
+        # 語幹が同じグループを関連語とする
+        for stem, group in stem_groups.items():
+            if len(group) > 1:
+                for word in group:
+                    synonyms[word].update(w for w in group if w != word)
+        
+        # 5. 略語と正式名称のパターン検出
+        abbreviation_patterns = {
+            'GMP': '適正製造規範',
+            'GQP': '品質保証',
+            'GVP': '製造販売後安全管理',
+            'QC': '品質管理',
+            'QA': '品質保証',
+            'SOP': '標準作業手順',
+            'ICH': '医薬品規制調和国際会議',
+        }
+        
+        for abbr, full_name in abbreviation_patterns.items():
+            if abbr in candidates and full_name in candidates:
+                synonyms[abbr].add(full_name)
+                synonyms[full_name].add(abbr)
+        
+        # 6. ドメイン固有の関連語
+        domain_relations = {
+            '原薬': ['原料', '主成分', 'API'],
+            '添加剤': ['賦形剤', '添加物'],
+            '製剤': ['医薬品', '薬剤'],
+            '試験': ['検査', 'テスト', '評価'],
+            '規格': ['基準', '標準', 'スペック'],
+            '工程': ['プロセス', '過程', '段階'],
+        }
+        
+        for main_term, related_terms in domain_relations.items():
+            if main_term in candidates:
+                for related in related_terms:
+                    if related in candidates:
+                        synonyms[main_term].add(related)
+                        synonyms[related].add(main_term)
+        
+        # setをlistに変換
+        return {k: list(v) for k, v in synonyms.items() if v}
+    
+    @staticmethod
+    def create_synonym_hints(synonyms: Dict[str, List[str]]) -> str:
+        """LLMプロンプト用の関連語ヒントを生成"""
+        if not synonyms:
+            return "関連語候補は検出されませんでした。"
+        
+        hints = []
+        for term, related in list(synonyms.items())[:20]:  # 上位20件まで
+            if related:
+                hints.append(f"- {term}: {', '.join(related[:5])}")  # 各用語につき最大5個の関連語
+        
+        return "検出された関連語候補:\n" + "\n".join(hints)
+
+# ── Candidate Generation Function with Advanced Scoring ─────────────────
+def generate_candidates_from_chunk(text: str) -> Tuple[List[str], Dict[str, List[str]]]:
+    """改良版：高度なスコアリングによる候補語生成と関連語検出"""
     if not text.strip():
-        return []
+        return [], {}
     
     try:
+        # 各呼び出しごとに新しいtokenizerインスタンスを作成
         local_tokenizer = dictionary.Dictionary().create()
+        
+        # Mode.Cで詳細な分かち書き
         tokens = local_tokenizer.tokenize(text, sudachi_mode)
+        doc_length = len(tokens)
         
-        noun_tokens = [{'surface': t.surface(), 'position': i} for i, t in enumerate(tokens) if t.part_of_speech()[0] == '名詞']
-        if not noun_tokens: return []
+        # 詳細な品詞情報を持つ名詞句を抽出
+        noun_phrases = []
+        current_phrase = []
+        token_positions = []  # 各トークンの文書内位置
+        current_pos = 0
         
-        candidates = {t['surface'] for t in noun_tokens if len(t['surface']) > 1}
-        
-        noun_groups = []
-        current_group = []
-        for token in noun_tokens:
-            if not current_group or token['position'] == current_group[-1]['position'] + 1:
-                current_group.append(token)
+        for i, token in enumerate(tokens):
+            pos_info = token.part_of_speech()
+            pos_main = pos_info[0]
+            pos_sub = pos_info[1] if len(pos_info) > 1 else None
+            
+            # 位置情報を記録
+            token_positions.append(current_pos)
+            current_pos += len(token.surface())
+            
+            # 品詞詳細による判定
+            if pos_main == '名詞':
+                # 除外する品詞細分類
+                if pos_sub in ['非自立', '代名詞', '数詞', '接尾']:
+                    if len(current_phrase) >= 2:
+                        noun_phrases.append(current_phrase[:])
+                    current_phrase = []
+                # 重要な品詞細分類を優先
+                elif pos_sub in ['サ変接続', '一般', '固有名詞', '複合']:
+                    current_phrase.append({
+                        'surface': token.normalized_form(),
+                        'pos_sub': pos_sub,
+                        'position': i
+                    })
+                else:
+                    # その他の名詞も文脈に応じて含める
+                    if current_phrase:
+                        current_phrase.append({
+                            'surface': token.normalized_form(),
+                            'pos_sub': pos_sub,
+                            'position': i
+                        })
             else:
-                if len(current_group) >= 2: noun_groups.append(current_group)
-                current_group = [token]
-        if len(current_group) >= 2: noun_groups.append(current_group)
+                if len(current_phrase) >= 1:
+                    noun_phrases.append(current_phrase[:])
+                current_phrase = []
         
-        for group in noun_groups:
-            surfaces = [t['surface'] for t in group]
-            for n in range(2, min(5, len(surfaces) + 1)):
-                for i in range(len(surfaces) - n + 1):
-                    candidates.add("".join(surfaces[i:i+n]))
+        if current_phrase:
+            noun_phrases.append(current_phrase)
         
-        return sorted(list(candidates), key=len, reverse=True)[:100]
+        # 候補語の詳細情報を収集
+        candidates_info = defaultdict(lambda: {
+            'freq': 0,
+            'positions': [],
+            'first_pos': float('inf'),
+            'pos_patterns': []
+        })
+        
+        # 単体名詞と複合名詞を候補に追加
+        for phrase in noun_phrases:
+            surfaces = [t['surface'] for t in phrase]
+            pos_patterns = [t['pos_sub'] for t in phrase]
+            
+            # 単体名詞（2文字以上、ストップワード除外）
+            for i, word in enumerate(surfaces):
+                if len(word) >= 2 and word not in STOPWORDS:
+                    pos_idx = phrase[i]['position']
+                    candidates_info[word]['freq'] += 1
+                    candidates_info[word]['positions'].append(token_positions[pos_idx] if pos_idx < len(token_positions) else 0)
+                    candidates_info[word]['first_pos'] = min(
+                        candidates_info[word]['first_pos'],
+                        token_positions[pos_idx] if pos_idx < len(token_positions) else 0
+                    )
+                    candidates_info[word]['pos_patterns'].append([pos_patterns[i]])
+            
+            # 複合名詞（2語以上の組み合わせ）
+            if len(phrase) >= 2:
+                for length in range(2, min(len(phrase) + 1, 6)):  # 最大5語まで
+                    for i in range(len(phrase) - length + 1):
+                        compound = ''.join(surfaces[i:i+length])
+                        
+                        # ストップワードのみの複合語は除外
+                        if compound in STOPWORDS:
+                            continue
+                        
+                        if len(compound) <= 20:  # 20文字以内
+                            pos_idx = phrase[i]['position']
+                            candidates_info[compound]['freq'] += 1
+                            candidates_info[compound]['positions'].append(
+                                token_positions[pos_idx] if pos_idx < len(token_positions) else 0
+                            )
+                            candidates_info[compound]['first_pos'] = min(
+                                candidates_info[compound]['first_pos'],
+                                token_positions[pos_idx] if pos_idx < len(token_positions) else 0
+                            )
+                            candidates_info[compound]['pos_patterns'].append(pos_patterns[i:i+length])
+        
+        # 総合スコアを計算
+        scorer = TermScorer()
+        scored_candidates = []
+        
+        # 頻度辞書を作成（C値計算用）
+        candidates_freq = {cand: info['freq'] for cand, info in candidates_info.items()}
+        c_values = scorer.calculate_c_value(candidates_freq)
+        
+        for candidate, info in candidates_info.items():
+            # 基本スコア（C値）
+            c_score = c_values.get(candidate, 0)
+            
+            # 文書内分布スコア
+            dist_score = scorer.calculate_distribution_score(info['positions'], doc_length)
+            
+            # 初出位置スコア
+            pos_score = scorer.calculate_position_score(info['first_pos'], current_pos)
+            
+            # 共起関係スコア
+            cooc_score = scorer.calculate_cooccurrence_score(candidate, [
+                [t['surface'] for t in phrase] for phrase in noun_phrases
+            ])
+            
+            # 品詞パターンボーナス（サ変接続や固有名詞を含む複合語を優遇）
+            pos_bonus = 0
+            for pattern in info['pos_patterns']:
+                if 'サ変接続' in pattern:
+                    pos_bonus += 0.5
+                if '固有名詞' in pattern:
+                    pos_bonus += 0.3
+            
+            # 総合スコア
+            total_score = (
+                c_score * 1.0 +
+                dist_score * 0.3 +
+                pos_score * 0.2 +
+                cooc_score * 0.4 +
+                pos_bonus
+            )
+            
+            # 最低頻度フィルタ（共起スコアが高い場合は例外）
+            if info['freq'] >= 2 or cooc_score >= 3.0:
+                scored_candidates.append((candidate, total_score))
+        
+        # スコアでソートして上位を選択
+        scored_candidates.sort(key=lambda x: x[1], reverse=True)
+        
+        # 階層的フィルタリング（部分文字列の除外）
+        final_candidates = []
+        seen_substrings = set()
+        
+        for candidate, score in scored_candidates[:150]:
+            # 既に選ばれた長い用語の部分文字列は除外
+            is_substring = False
+            for seen in seen_substrings:
+                if candidate in seen and len(candidate) < len(seen):
+                    is_substring = True
+                    break
+            
+            if not is_substring and score > 0:
+                final_candidates.append(candidate)
+                seen_substrings.add(candidate)
+                if len(final_candidates) >= 100:
+                    break
+        
+        # 関連語検出
+        synonym_detector = SynonymDetector()
+        detected_synonyms = synonym_detector.find_synonyms(
+            final_candidates, 
+            noun_phrases
+        )
+        
+        logger.debug(f"候補語生成完了: {len(final_candidates)}件, 関連語: {len(detected_synonyms)}グループ")
+        return final_candidates, detected_synonyms
         
     except Exception as e:
         logger.error(f"Error in candidate generation: {e}")
-        return []
+        return [], {}
 
 # ── Database Saving Function ──────────────────────
 def _save_terms_to_db(terms: List[Dict[str, Any]]):
@@ -314,17 +750,27 @@ file_processing_pipeline = (
 candidate_generation_chain = RunnableLambda(generate_candidates_from_chunk, name="generate_candidates")
 
 async def extract_with_context(chunk_data: Dict[str, str]) -> Dict:
-    """RAGを含む用語抽出"""
+    """RAGと関連語検出を含む用語抽出"""
     chunk_text, chunk_id = chunk_data["text"], chunk_data["chunk_id"]
-    candidates = await candidate_generation_chain.ainvoke(chunk_text)
-    if not candidates: return {"terms": []}
     
+    # 候補語と関連語を生成
+    candidates, detected_synonyms = await candidate_generation_chain.ainvoke(chunk_text)
+    if not candidates: 
+        return {"terms": []}
+    
+    # 類似文脈を検索
     related_contexts = await vector_store.search_similar_chunks(chunk_text[:1000], chunk_id, n_results=3)
     
+    # 関連語ヒントを生成
+    synonym_detector = SynonymDetector()
+    synonym_hints = synonym_detector.create_synonym_hints(detected_synonyms)
+    
+    # プロンプトデータを構築
     prompt_data = {
         "text": chunk_text[:3000],
         "candidates": "\n".join(candidates),
-        "related_contexts": related_contexts
+        "related_contexts": related_contexts,
+        "synonym_hints": synonym_hints
     }
     
     extraction_chain = (validation_prompt | llm | json_parser).with_config({"run_name": "term_validation"})
@@ -367,19 +813,92 @@ async def extract_terms_with_rate_limit(chunks_with_ids: List[Dict[str, str]]) -
     return results
 
 def merge_duplicate_terms(term_lists: List[TermList]) -> List[Term]:
-    """重複する用語をマージ"""
+    """改良版：編集距離を使った高度な重複マージ"""
+    from difflib import SequenceMatcher
+    
+    def similarity_ratio(a: str, b: str) -> float:
+        """文字列の類似度を計算（0-1のスコア）"""
+        return SequenceMatcher(None, a.lower(), b.lower()).ratio()
+    
     merged: Dict[str, Dict] = {}
+    
     for term_list in term_lists:
         for term in term_list.get("terms", []):
-            if not isinstance(term, dict) or not term.get("headword"): continue
-            key = term["headword"].lower().strip()
-            if key not in merged:
-                merged[key] = term
+            if not isinstance(term, dict) or not term.get("headword"):
+                continue
+            
+            headword = term["headword"].strip()
+            
+            # 既存の用語との類似度チェック
+            best_match = None
+            best_score = 0
+            
+            for existing_key, existing_term in merged.items():
+                existing_headword = existing_term.get("headword", "")
+                
+                # 編集距離による類似度
+                score = similarity_ratio(headword, existing_headword)
+                
+                # 部分文字列チェック（どちらかが他方を含む場合）
+                if headword in existing_headword or existing_headword in headword:
+                    score = max(score, 0.9)  # 部分一致は高スコア
+                
+                if score > 0.85 and score > best_score:  # 85%以上の類似度
+                    best_match = existing_key
+                    best_score = score
+            
+            if best_match:
+                # 類似語として統合
+                existing = merged[best_match]
+                
+                # より長い見出し語を採用（情報量が多い）
+                if len(headword) > len(existing["headword"]):
+                    # 短い方を類義語に追加
+                    existing["synonyms"] = list(set(
+                        existing.get("synonyms", []) + [existing["headword"]]
+                    ))
+                    existing["headword"] = headword
+                else:
+                    # 現在の見出し語を類義語に追加
+                    if headword != existing["headword"]:
+                        existing["synonyms"] = list(set(
+                            existing.get("synonyms", []) + [headword]
+                        ))
+                
+                # 類義語をマージ
+                existing["synonyms"] = list(set(
+                    existing.get("synonyms", []) + term.get("synonyms", [])
+                ))
+                
+                # より良い定義を選択（長い方が詳細）
+                if len(term.get("definition", "")) > len(existing.get("definition", "")):
+                    existing["definition"] = term.get("definition")
+                
+                # カテゴリが未設定なら更新
+                if not existing.get("category") and term.get("category"):
+                    existing["category"] = term.get("category")
             else:
-                merged[key]["synonyms"] = list(set(merged[key].get("synonyms", []) + term.get("synonyms", [])))
-                if not merged[key].get("definition"): merged[key]["definition"] = term.get("definition")
-                if not merged[key].get("category"): merged[key]["category"] = term.get("category")
-    logger.info(f"Merged {len(merged)} unique terms")
+                # 新規用語として追加
+                key = headword.lower()
+                merged[key] = {
+                    "headword": headword,
+                    "synonyms": term.get("synonyms", []),
+                    "definition": term.get("definition", ""),
+                    "category": term.get("category")
+                }
+    
+    # 類義語リストから重複と見出し語自身を除去
+    for key, term in merged.items():
+        if "synonyms" in term:
+            # 見出し語と同じものを除去
+            term["synonyms"] = [
+                syn for syn in term["synonyms"] 
+                if syn and syn != term["headword"]
+            ]
+            # 重複除去
+            term["synonyms"] = list(set(term["synonyms"]))
+    
+    logger.info(f"Merged to {len(merged)} unique terms")
     return list(merged.values())
 
 # メインパイプライン

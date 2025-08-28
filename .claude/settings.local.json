@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(git push:*)",
+      "Bash(git pull:*)",
+      "Bash(cat:*)",
+      "mcp__sequential-thinking__sequentialthinking",
+      "Bash(move requirements_updated.txt requirements.txt)",
+      "Bash(iconv:*)",
+      "Bash(pip install:*)",
+      "Bash(python:*)",
+      "Bash(myenvScriptsactivate)",
+      "Bash(pip --version)",
+      "Bash(./myenv/Scripts/activate)",
+      "Read(c:\\work\\RAG\\advancedrag/**)",
+      "Read(c:\\work\\RAG\\advancedrag/**)",
+      "Read(c:\\work\\RAG\\advancedrag/**)",
+      "Bash(pip show:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

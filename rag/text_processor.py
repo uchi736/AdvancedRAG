@@ -3,17 +3,24 @@ import re
 from typing import List
 
 try:
-    from janome.tokenizer import Tokenizer
-    JANOME_AVAILABLE = True
+    from sudachipy import tokenizer, dictionary
+    SUDACHI_AVAILABLE = True
 except ImportError:
-    print("Warning: Janome not installed. Japanese tokenization will be limited.")
-    JANOME_AVAILABLE = False
+    print("Warning: SudachiPy not installed. Japanese tokenization will be limited.")
+    SUDACHI_AVAILABLE = False
 
 class JapaneseTextProcessor:
-    """A utility class for Japanese text processing."""
+    """A utility class for Japanese text processing using SudachiPy."""
     
     def __init__(self):
-        self.tokenizer = Tokenizer() if JANOME_AVAILABLE else None
+        if SUDACHI_AVAILABLE:
+            # Create SudachiPy tokenizer with mode A (shortest split)
+            self.tokenizer_obj = dictionary.Dictionary().create()
+            self.mode = tokenizer.Tokenizer.SplitMode.A
+        else:
+            self.tokenizer_obj = None
+            self.mode = None
+            
         # Common Japanese stop words (can be expanded)
         self.stop_words = {
             'の', 'に', 'は', 'を', 'た', 'が', 'で', 'て', 'と', 'し', 'れ', 'さ',
@@ -39,16 +46,22 @@ class JapaneseTextProcessor:
         return False
     
     def tokenize(self, text: str, remove_stop_words: bool = True) -> List[str]:
-        """Tokenizes Japanese text."""
-        if not self.tokenizer or not self.is_japanese(text):
+        """Tokenizes Japanese text using SudachiPy."""
+        if not self.tokenizer_obj or not self.is_japanese(text):
             # Fallback to space-splitting for non-Japanese text
             return text.split()
         
         tokens = []
-        for token in self.tokenizer.tokenize(text):
+        morphemes = self.tokenizer_obj.tokenize(text, self.mode)
+        
+        for morpheme in morphemes:
+            # Get part of speech information
+            pos = morpheme.part_of_speech()[0]
+            
             # Extract nouns, verbs, adjectives (can be customized)
-            if token.part_of_speech.split(',')[0] in ['名詞', '動詞', '形容詞', '形容動詞']:
-                base_form = token.base_form if token.base_form != '*' else token.surface
+            if pos in ['名詞', '動詞', '形容詞', '形容動詞']:
+                # Use normalized form if available, otherwise use surface form
+                base_form = morpheme.normalized_form()
                 
                 if remove_stop_words and base_form in self.stop_words:
                     continue
@@ -56,6 +69,71 @@ class JapaneseTextProcessor:
                 tokens.append(base_form)
         
         return tokens
+    
+    def tokenize_with_details(self, text: str) -> List[dict]:
+        """Tokenizes Japanese text and returns detailed information."""
+        if not self.tokenizer_obj or not self.is_japanese(text):
+            return []
+        
+        results = []
+        morphemes = self.tokenizer_obj.tokenize(text, self.mode)
+        
+        for morpheme in morphemes:
+            pos_info = morpheme.part_of_speech()
+            results.append({
+                'surface': morpheme.surface(),
+                'normalized': morpheme.normalized_form(),
+                'reading': morpheme.reading_form(),
+                'pos': pos_info[0],  # Part of speech (major category)
+                'pos_detail': pos_info[1] if len(pos_info) > 1 else None,  # Sub-category
+                'pos_all': pos_info  # All POS information
+            })
+        
+        return results
+    
+    def extract_keywords(self, text: str, min_length: int = 2) -> List[str]:
+        """Extracts keywords (nouns and compound nouns) from Japanese text."""
+        if not self.tokenizer_obj or not self.is_japanese(text):
+            return []
+        
+        keywords = []
+        morphemes = self.tokenizer_obj.tokenize(text, self.mode)
+        
+        # Extract nouns
+        noun_sequence = []
+        for i, morpheme in enumerate(morphemes):
+            pos = morpheme.part_of_speech()[0]
+            
+            if pos == '名詞':
+                noun_sequence.append(morpheme.normalized_form())
+            else:
+                # If we have accumulated nouns, add them as keywords
+                if noun_sequence:
+                    # Add individual nouns
+                    for noun in noun_sequence:
+                        if len(noun) >= min_length and noun not in self.stop_words:
+                            keywords.append(noun)
+                    
+                    # Add compound noun if multiple nouns in sequence
+                    if len(noun_sequence) > 1:
+                        compound = ''.join(noun_sequence)
+                        if len(compound) <= 10:  # Limit compound noun length
+                            keywords.append(compound)
+                    
+                    noun_sequence = []
+        
+        # Handle remaining noun sequence
+        if noun_sequence:
+            for noun in noun_sequence:
+                if len(noun) >= min_length and noun not in self.stop_words:
+                    keywords.append(noun)
+            
+            if len(noun_sequence) > 1:
+                compound = ''.join(noun_sequence)
+                if len(compound) <= 10:
+                    keywords.append(compound)
+        
+        return list(set(keywords))  # Remove duplicates
     
     def normalize_text(self, text: str) -> str:
         """Normalizes text (e.g., full-width to half-width)."""

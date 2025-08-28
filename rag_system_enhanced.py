@@ -36,8 +36,9 @@ from rag.retriever import JapaneseHybridRetriever
 from rag.ingestion import IngestionHandler
 from rag.sql_handler import SQLHandler
 from rag.chains import create_chains, create_retrieval_chain, create_full_rag_chain
+from rag.evaluator import RAGEvaluator, EvaluationResults, EvaluationMetrics
 
-load_dotenv()
+# load_dotenv()  # Commented out - loaded in main script
 
 def format_docs(docs: List[Any]) -> str:
     """Helper function to format documents for context."""
@@ -81,6 +82,9 @@ class RAGSystem:
         self.chains = create_chains(self.llm, cfg.max_sql_results)
         self.sql_handler.multi_table_sql_chain = self.chains["multi_table_sql"]
         self.sql_handler.sql_answer_generation_chain = self.chains["sql_answer_generation"]
+        
+        # Initialize evaluator
+        self.evaluator = None  # Lazy initialization to avoid overhead when not needed
 
     def _init_llms_and_embeddings(self):
         cfg = self.config
@@ -135,7 +139,9 @@ class RAGSystem:
             result = self.rag_chain.invoke(chain_input, config=config)
             usage = {"total_tokens": cb.total_tokens, "cost": cb.total_cost}
         return {
-            "answer": result.get("answer", "回答を生成できませんでした。"), "sources": result.get("documents", []),
+            "answer": result.get("answer", "回答を生成できませんでした。"), 
+            "sources": result.get("documents", []),
+            "retrieved_docs": result.get("documents", []),  # 評価システム用に追加
             "question": question, "usage": usage, "query_expansion": {}, "reranking": {}, "golden_retriever": {}
         }
 
@@ -202,5 +208,126 @@ class RAGSystem:
         from scripts.term_extractor_embeding import run_pipeline as term_pipeline
         asyncio.run(term_pipeline(Path(input_dir), Path(output_json)))
         print(f"[TermExtractor] Extraction complete -> {output_json}")
+
+    # --- Evaluation Methods ---
+    def initialize_evaluator(self, 
+                           k_values: List[int] = [1, 3, 5, 10],
+                           similarity_method: str = "azure_embedding",
+                           similarity_threshold: float = None) -> RAGEvaluator:
+        """Initialize the evaluation system"""
+        if self.evaluator is None:
+            # Use config.confidence_threshold if similarity_threshold not provided
+            threshold = similarity_threshold if similarity_threshold is not None else self.config.confidence_threshold
+            self.evaluator = RAGEvaluator(
+                config=self.config,
+                k_values=k_values,
+                similarity_method=similarity_method,
+                similarity_threshold=threshold
+            )
+        return self.evaluator
+
+    async def evaluate_system(self, 
+                             test_questions: List[Dict[str, Any]],
+                             similarity_method: str = "azure_embedding",
+                             export_path: Optional[str] = None) -> EvaluationMetrics:
+        """
+        Evaluate the RAG system using test questions
+        
+        Args:
+            test_questions: List of dicts with 'question' and 'expected_sources' keys
+            similarity_method: Method for similarity calculation
+            export_path: Optional path to export results to CSV
+        
+        Returns:
+            EvaluationMetrics object with aggregated results
+        """
+        # Initialize evaluator if needed
+        evaluator = self.initialize_evaluator(similarity_method=similarity_method)
+        
+        # Run evaluation
+        results = await evaluator.evaluate_rag_system(self, test_questions)
+        
+        # Print results
+        evaluator.print_results(results, similarity_method)
+        
+        # Export if path provided
+        if export_path:
+            evaluator.export_results_to_csv(
+                {similarity_method: results}, 
+                export_path
+            )
+        
+        # Create and return metrics report
+        return evaluator.create_evaluation_report(results)
+
+    async def evaluate_from_csv(self, 
+                               csv_path: str,
+                               similarity_method: str = "azure_embedding",
+                               export_path: Optional[str] = None) -> List[EvaluationResults]:
+        """
+        Evaluate the RAG system using test data from CSV file
+        
+        Args:
+            csv_path: Path to CSV file with evaluation data
+            similarity_method: Method for similarity calculation
+            export_path: Optional path to export results to CSV
+        
+        Returns:
+            List of EvaluationResults
+        """
+        # Initialize evaluator if needed
+        evaluator = self.initialize_evaluator(similarity_method=similarity_method)
+        
+        # Run evaluation from CSV
+        results = await evaluator.evaluate_csv(csv_path, rag_system=self)
+        
+        # Print results
+        evaluator.print_results(results, similarity_method)
+        
+        # Export if path provided
+        if export_path:
+            evaluator.export_results_to_csv(
+                {similarity_method: results}, 
+                export_path
+            )
+        
+        return results
+
+    async def run_comprehensive_evaluation(self,
+                                          test_questions: List[Dict[str, Any]],
+                                          methods: List[str] = ["azure_embedding", "azure_llm", "text_overlap", "hybrid"],
+                                          export_path: str = "evaluation_results.csv") -> Dict[str, EvaluationMetrics]:
+        """
+        Run comprehensive evaluation with multiple similarity methods
+        
+        Args:
+            test_questions: List of test questions with expected sources
+            methods: List of similarity methods to evaluate
+            export_path: Path to export combined results
+        
+        Returns:
+            Dictionary mapping method names to EvaluationMetrics
+        """
+        all_results = {}
+        all_metrics = {}
+        
+        for method in methods:
+            print(f"\n=== 評価方法: {method} ===")
+            evaluator = self.initialize_evaluator(similarity_method=method)
+            
+            # Run evaluation
+            results = await evaluator.evaluate_rag_system(self, test_questions)
+            evaluator.print_results(results, method)
+            
+            # Store results
+            all_results[method] = results
+            all_metrics[method] = evaluator.create_evaluation_report(results)
+        
+        # Export combined results
+        if export_path and all_results:
+            evaluator.export_results_to_csv(all_results, export_path)
+            print(f"\n全結果を {export_path} に保存しました")
+        
+        return all_metrics
 
 __all__ = ["Config", "RAGSystem"]

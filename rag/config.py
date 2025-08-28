@@ -10,18 +10,40 @@ class Config:
     db_name: str = os.getenv("DB_NAME", "postgres")
     db_user: str = os.getenv("DB_USER", "postgres")
     db_password: str = os.getenv("DB_PASSWORD", "your-password")
-
+    
     # OpenAI API settings
-    openai_api_key: Optional[str] = os.getenv("OPENAI_API_KEY")
-    embedding_model_identifier: str = os.getenv("EMBEDDING_MODEL_IDENTIFIER", "text-embedding-3-small")
-    llm_model_identifier: str = os.getenv("LLM_MODEL_IDENTIFIER", "gpt-4o-mini")
+    openai_api_key: Optional[str] = None
+    embedding_model_identifier: str = "text-embedding-3-small"
+    llm_model_identifier: str = "gpt-4o-mini"
 
-    # Azure OpenAI Service settings
-    azure_openai_api_key: Optional[str] = os.getenv("AZURE_OPENAI_API_KEY")
-    azure_openai_endpoint: Optional[str] = os.getenv("AZURE_OPENAI_ENDPOINT")
-    azure_openai_api_version: Optional[str] = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01")
-    azure_openai_chat_deployment_name: Optional[str] = os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME")
-    azure_openai_embedding_deployment_name: Optional[str] = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME")
+    # Azure OpenAI Service settings - will be populated in __post_init__
+    azure_openai_api_key: Optional[str] = None
+    azure_openai_endpoint: Optional[str] = None
+    azure_openai_api_version: Optional[str] = None
+    azure_openai_chat_deployment_name: Optional[str] = None
+    azure_openai_embedding_deployment_name: Optional[str] = None
+    
+    def __post_init__(self):
+        """Load environment variables dynamically after load_dotenv() has been called"""
+        # Load database settings
+        self.db_host = os.getenv("DB_HOST", "localhost")
+        self.db_port = os.getenv("DB_PORT", "5432")
+        self.db_name = os.getenv("DB_NAME", "postgres")
+        self.db_user = os.getenv("DB_USER", "postgres")
+        self.db_password = os.getenv("DB_PASSWORD", "your-password")
+        
+        # Load OpenAI settings
+        self.openai_api_key = os.getenv("OPENAI_API_KEY")
+        self.embedding_model_identifier = os.getenv("EMBEDDING_MODEL_IDENTIFIER", "text-embedding-3-small")
+        self.llm_model_identifier = os.getenv("LLM_MODEL_IDENTIFIER", "gpt-4o-mini")
+        
+        # Load Azure OpenAI settings
+        self.azure_openai_api_key = os.getenv("AZURE_OPENAI_API_KEY")
+        self.azure_openai_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+        self.azure_openai_api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01")
+        self.azure_openai_chat_deployment_name = os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME")
+        self.azure_openai_embedding_deployment_name = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME")
+        
 
     # RAG and Search settings
     enable_parent_child_chunking: bool = os.getenv("ENABLE_PARENT_CHILD_CHUNKING", "false").lower() == "true"
@@ -57,4 +79,4 @@ class Config:
     max_jargon_terms_per_query: int = int(os.getenv("MAX_JARGON_TERMS_PER_QUERY", 5))
     enable_doc_summarization: bool = os.getenv("ENABLE_DOC_SUMMARIZATION", "true").lower() == "true"
     enable_metadata_enrichment: bool = os.getenv("ENABLE_METADATA_ENRICHMENT", "true").lower() == "true"
-    confidence_threshold: float = float(os.getenv("CONFIDENCE_THRESHOLD", 0.7))
+    confidence_threshold: float = float(os.getenv("CONFIDENCE_THRESHOLD", 0.2))

@@ -1,72 +1,32 @@
 {
   "terms": [
     {
-      "headword": "ハーモナイゼーション推進",
-      "definition": "医薬品承認審査資料の国際的な調和を促進する取り組み。",
-      "synonyms": [
-        "ハーモナイゼーション"
-      ],
-      "category": "医薬品規制"
-    },
-    {
-      "headword": "二段階発がんモデル",
-      "definition": "発がんの初期段階と促進段階を評価するための試験モデル。",
-      "synonyms": [
-        "段階発がんモデル"
-      ],
-      "category": "毒性試験"
-    },
-    {
-      "headword": "短期代替発がん試験",
-      "definition": "長期試験の代替として短期間で発がん性を評価する試験。",
-      "synonyms": [
-        "代替発がん試験",
-        "短期代替"
-      ],
-      "category": "毒性試験"
-    },
-    {
-      "headword": "規制調和国際会議",
-      "definition": "医薬品規制の国際的調和を目的とした会議（ICH）。",
-      "synonyms": [
-        "ICH",
-        "調和国際会議"
-      ],
-      "category": "医薬品規制"
-    },
-    {
-      "headword": "旧ガイドライン",
-      "definition": "平成20年に定められた医薬品のがん原性試験に関するガイドライン。",
+      "headword": "レシプロエンジン",
       "synonyms": [],
-      "category": "医薬品規制"
+      "definition": "ピストンの往復運動を利用して動力を得る内燃機関。",
+      "category": "技術"
     },
     {
-      "headword": "新ガイドライン",
-      "definition": "ICH合意に基づき改訂された医薬品のがん原性試験に関するガイドライン。",
-      "synonyms": [],
-      "category": "医薬品規制"
-    },
-    {
-      "headword": "Weight of Evidence",
-      "definition": "複数の証拠を総合的に評価するアプローチ。",
+      "headword": "NOX",
       "synonyms": [
-        "証拠の重み付け"
+        "窒素酸化物"
       ],
-      "category": "毒性評価"
+      "definition": "燃焼過程で生成される大気汚染物質で、環境規制の対象。",
+      "category": "規制"
     },
     {
-      "headword": "rasH2-Tgマウス",
-      "definition": "発がん性試験に用いられるトランスジェニックマウスの一種。",
-      "synonyms": [
-        "トランスジェニックマウス"
-      ],
-      "category": "毒性試験"
-    },
-    {
-      "headword": "薬物動態学的指標",
-      "definition": "薬物の体内動態を評価するための指標。",
+      "headword": "クランクケース",
       "synonyms": [],
-      "category": "薬物動態"
+      "definition": "エンジン内部の部品を収容するケースで、潤滑油の管理も行う。",
+      "category": "技術"
+    },
+    {
+      "headword": "IHI",
+      "synonyms": [
+        "石川島播磨重工業"
+      ],
+      "definition": "日本の重工業メーカーで、エンジンや環境技術を開発。",
+      "category": "その他"
     }
   ]
 }
