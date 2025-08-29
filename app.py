@@ -21,16 +21,16 @@ st.set_page_config(
 load_dotenv()
 
 try:
-    from rag_system_enhanced import RAGSystem, Config
-    from utils.style import STYLE
-    from state import initialize_session_state, get_rag_system
-    from ui.sidebar import render_sidebar, render_langsmith_info
-    from ui.chat_tab import render_chat_tab
-    from ui.dictionary_tab import render_dictionary_tab
-    from ui.data_tab import render_data_tab
-    from ui.documents_tab import render_documents_tab
-    from ui.settings_tab import render_settings_tab
-    from ui.evaluation_tab import render_evaluation_tab
+    from src.core.rag_system import RAGSystem, Config
+    from src.utils.style import STYLE
+    from src.ui.state import initialize_session_state, get_rag_system
+    from src.ui.sidebar import render_sidebar, render_langsmith_info
+    from src.ui.chat_tab import render_chat_tab
+    from src.ui.dictionary_tab import render_dictionary_tab
+    from src.ui.data_tab import render_data_tab
+    from src.ui.documents_tab import render_documents_tab
+    from src.ui.settings_tab import render_settings_tab
+    from src.ui.evaluation_tab import render_evaluation_tab
 except ImportError as e:
     st.error(f"モジュールのインポートに失敗しました: {e}")
     st.error("必要なファイルが正しい場所にあるか確認してください。")

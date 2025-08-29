@@ -4,6 +4,16 @@
 
 このシステムは、文書検索とSQL検索を統合した高度なRAG（Retrieval-Augmented Generation）システムです。Streamlitベースの直感的なUIを提供し、Azure OpenAI Serviceを活用して、多言語対応の自然言語処理による強力な情報検索と質問応答を実現します。データ（CSV/Excel）に対するSQL検索も同時にします。
 
+## 🎯 リファクタリング完了
+
+2025年8月29日に大規模なフォルダ構成リファクタリングを実施し、可読性と改修性を大幅に向上させました。
+
+### ✨ 改善点
+- **関心の分離**: 機能別にフォルダを整理し、各モジュールの責任を明確化
+- **改修性向上**: 関連ファイルを近接配置し、変更影響範囲を明確化
+- **テスト容易性**: 構造化によりユニットテスト作成が容易に
+- **新規開発者対応**: 直感的な構造で理解しやすく
+
 ## 主な機能
 
 - **ハイブリッド検索**: ベクトル検索とキーワード検索を組み合わせ、Reciprocal Rank Fusion (RRF) によって検索精度を向上させます。
@@ -22,34 +32,45 @@
 ├── app.py                      # Streamlitアプリケーションのエントリポイント
 ├── requirements.txt            # 必要なPythonライブラリ
 ├── .env.example                # 環境変数の設定テンプレート
-├── rag/                        # RAGシステムのコアモジュール
-│   ├── __init__.py
-│   ├── chains.py               # LangChainのチェーンとプロンプト設定
-│   ├── config.py               # 設定ファイル(Config)
-│   ├── evaluator.py            # 評価システムモジュール
-│   ├── ingestion.py            # ドキュメントの取り込みと処理
-│   ├── jargon.py               # 専門用語辞書の管理
-│   ├── retriever.py            # ハイブリッド検索リトリーバー
-│   ├── sql_handler.py          # Text-to-SQL機能の処理
-│   └── text_processor.py       # 日本語テキスト処理
-├── rag_system_enhanced.py      # RAGシステムのファサード
-├── evaluate_rag.py             # 評価スクリプト
-├── scripts/                    # 拡張したスクリプト
-│   ├── term_extract.py
-│   └── term_extractor_embeding.py
-├── state.py                    # Streamlitのセッション状態管理
-├── ui/                         # UIコンポーネント
-│   ├── __init__.py
-│   ├── chat_tab.py
-│   ├── data_tab.py
-│   ├── dictionary_tab.py
-│   ├── documents_tab.py
-│   ├── settings_tab.py
-│   └── sidebar.py
-└── utils/                      # ユーティリティ関数・モジュール
-    ├── __init__.py
-    ├── helpers.py
-    └── style.py
+├── src/                        # メインソースコード
+│   ├── core/                   # コアビジネスロジック
+│   │   └── rag_system.py       # RAGシステムのファサード
+│   ├── rag/                    # RAGシステムのコアモジュール
+│   │   ├── chains.py           # LangChainのチェーンとプロンプト設定
+│   │   ├── config.py           # 設定ファイル(Config)
+│   │   ├── evaluator.py        # 評価システムモジュール
+│   │   ├── ingestion.py        # ドキュメントの取り込みと処理
+│   │   ├── jargon.py           # 専門用語辞書の管理
+│   │   ├── retriever.py        # ハイブリッド検索リトリーバー
+│   │   ├── sql_handler.py      # Text-to-SQL機能の処理
+│   │   └── text_processor.py   # 日本語テキスト処理
+│   ├── ui/                     # UIコンポーネント
+│   │   ├── chat_tab.py         # チャット画面
+│   │   ├── data_tab.py         # データ管理画面
+│   │   ├── dictionary_tab.py   # 辞書管理画面
+│   │   ├── documents_tab.py    # ドキュメント管理画面
+│   │   ├── evaluation_tab.py   # 評価システム画面
+│   │   ├── settings_tab.py     # 設定画面
+│   │   ├── sidebar.py          # サイドバー
+│   │   └── state.py            # セッション状態管理
+│   ├── evaluation/             # 評価システム
+│   │   ├── evaluator.py        # 評価メインスクリプト
+│   │   ├── test_scenarios.py   # テストシナリオ
+│   │   └── test_questions.csv  # 評価用データ
+│   ├── scripts/                # 拡張スクリプト
+│   │   ├── term_extract.py     # 専門用語抽出
+│   │   ├── term_extractor_embeding.py
+│   │   ├── term_extractor_with_c_value.py
+│   │   └── test_synonym_detection.py
+│   └── utils/                  # ユーティリティ関数
+│       ├── helpers.py          # ヘルパー関数
+│       └── style.py            # UIスタイル設定
+├── docs/                       # ドキュメント
+│   ├── evaluation/             # 評価関連ドキュメント
+│   └── architecture/           # アーキテクチャドキュメント
+└── output/                     # 出力ファイル
+    ├── images/                 # 生成された画像
+    └── terms.json              # 抽出された専門用語
 ```
 
 ## インストール手順
@@ -87,7 +108,7 @@ streamlit run app.py
 RAGシステムの検索精度を評価するには、以下のスクリプトを実行します：
 
 ```bash
-python evaluate_rag.py
+python src/evaluation/evaluator.py
 ```
 
 ### 評価機能の特徴
@@ -148,221 +169,76 @@ graph TB
         CHAIN --> SQL[SQL Handler]
         SQL --> CSV[CSV/Excel Parser]
         
-        CHAIN --> JAR[Jargon Dictionary]
-        JAR --> GR[Golden Retriever]
-        
-        CHAIN --> EVAL[Evaluator]
-        EVAL --> METRICS[Evaluation Metrics]
+        CHAIN --> JARGON[Jargon Dictionary]
+        JARGON --> TERMEX[Term Extractor]
     end
     
-    subgraph "Data Processing Layer"
-        DOC --> ING[Document Ingestion]
-        ING --> DP[Document Parser]
-        DP --> TP[Text Processor]
-        TP --> SUD[SudachiPy Tokenizer]
-        
-        DT --> SQLE[SQL Engine]
-        SQLE --> SQL
+    subgraph "Data Layer"
+        VS --> PG[(PostgreSQL + pgvector)]
+        SQL --> SQLITE[(SQLite)]
+        JARGON --> JSON[(JSON Store)]
     end
     
     subgraph "External Services"
-        CHAIN --> AOAI[Azure OpenAI]
-        VS --> EMB[Embedding Model]
-        EMB --> AOAI
+        CHAIN --> AZURE[Azure OpenAI]
+        AZURE --> GPT[GPT-4o]
+        AZURE --> EMBED[text-embedding-ada-002]
     end
     
-    subgraph "Storage Layer"
-        VS --> PG[(PostgreSQL/pgvector)]
-        JAR --> JSON[terms.json]
-        ING --> FILES[Local Files]
+    subgraph "Evaluation System"
+        EVAL[Evaluator] --> METRICS[Metrics Calculator]
+        METRICS --> RECALL[Recall@K]
+        METRICS --> PRECISION[Precision@K]
+        METRICS --> MRR[MRR]
+        METRICS --> NDCG[nDCG]
+        METRICS --> HR[Hit Rate@K]
     end
 ```
 
-### データフロー
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant UI as Streamlit UI
-    participant Chain as LangChain
-    participant Retriever
-    participant SQL as SQL Handler
-    participant Jargon
-    participant Evaluator
-    participant Azure as Azure OpenAI
-    participant DB as PostgreSQL
-
-    User->>UI: 質問入力
-    UI->>Chain: クエリ処理開始
-    
-    alt ドキュメント検索
-        Chain->>Retriever: 関連文書検索
-        Retriever->>DB: ベクトル検索
-        Retriever->>DB: キーワード検索
-        DB-->>Retriever: 検索結果
-        Retriever->>Retriever: RRF融合
-        Retriever-->>Chain: 統合結果
-    end
-    
-    alt SQL検索
-        Chain->>SQL: データベース検索
-        SQL->>SQL: Text-to-SQL変換
-        SQL-->>Chain: SQL結果
-    end
-    
-    alt 専門用語検索
-        Chain->>Jargon: 用語確認
-        Jargon->>Jargon: Golden Retriever
-        Jargon-->>Chain: 用語定義
-    end
-    
-    Chain->>Azure: プロンプト＋コンテキスト
-    Azure-->>Chain: 生成された回答
-    
-    alt 評価実行
-        Chain->>Evaluator: 検索結果の評価
-        Evaluator->>Evaluator: 指標計算
-        Evaluator-->>Chain: 評価結果
-    end
-    
-    Chain-->>UI: 回答と情報
-    UI-->>User: 結果表示
-```
-
-### クラス構成
-
-```mermaid
-classDiagram
-    class StreamlitApp {
-        +initialize_session()
-        +render_ui()
-        +handle_user_input()
-    }
-    
-    class RAGSystem {
-        +config: Config
-        +retriever: HybridRetriever
-        +sql_handler: SQLHandler
-        +jargon_manager: JargonDictionary
-        +evaluator: RAGEvaluator
-        +query()
-        +query_unified()
-        +evaluate_system()
-        +evaluate_from_csv()
-        +run_comprehensive_evaluation()
-    }
-    
-    class RAGEvaluator {
-        +config: Config
-        +k_values: List[int]
-        +similarity_method: str
-        +evaluate_retrieval_quality()
-        +evaluate_csv()
-        +evaluate_rag_system()
-        +calculate_average_metrics()
-        +export_results_to_csv()
-    }
-    
-    class EvaluationResults {
-        +question: str
-        +recall_at_k: Dict
-        +precision_at_k: Dict
-        +mrr: float
-        +ndcg_at_k: Dict
-        +hit_rate_at_k: Dict
-    }
-    
-    class HybridRetriever {
-        +vector_store: VectorStore
-        +keyword_search: KeywordSearch
-        +rrf_fusion()
-        +retrieve_documents()
-    }
-    
-    class SQLHandler {
-        +text_to_sql()
-        +execute_query()
-        +parse_results()
-    }
-    
-    class JargonDictionary {
-        +terms: Dict
-        +golden_retriever()
-        +find_definition()
-        +update_terms()
-    }
-    
-    class DocumentIngestion {
-        +parser: DocumentParser
-        +processor: TextProcessor
-        +ingest_file()
-        +chunk_document()
-    }
-    
-    class TextProcessor {
-        +sudachi_tokenizer: SudachiPy
-        +normalize_text()
-        +extract_keywords()
-    }
-    
-    StreamlitApp --> RAGSystem
-    RAGSystem --> HybridRetriever
-    RAGSystem --> SQLHandler
-    RAGSystem --> JargonDictionary
-    RAGSystem --> RAGEvaluator
-    RAGEvaluator --> EvaluationResults
-    StreamlitApp --> DocumentIngestion
-    DocumentIngestion --> TextProcessor
-```
-
-### 主要技術スタック
+### ハイブリッド検索の仕組み
 
 ```mermaid
 graph LR
-    subgraph "Frontend"
-        ST[Streamlit 1.36+]
-    end
+    Q[Query] --> QP[Query Processing]
+    QP --> VS[Vector Search]
+    QP --> KS[Keyword Search]
     
-    subgraph "AI/ML"
-        LC[LangChain 0.2+]
-        AOAI[Azure OpenAI]
-        EMB[text-embedding-3-small]
-        GPT[GPT-4o]
-        SK[scikit-learn 1.5+]
-    end
+    VS --> VSR[Vector Results]
+    KS --> KSR[Keyword Results]
     
-    subgraph "Database"
-        PG[PostgreSQL 15+]
-        PGV[pgvector]
-    end
+    VSR --> RRF[Reciprocal Rank Fusion]
+    KSR --> RRF
     
-    subgraph "Processing"
-        SUD[SudachiPy]
-        PD[pandas]
-        NP[numpy]
-        SP[scipy]
-    end
-    
-    ST --> LC
-    LC --> AOAI
-    AOAI --> EMB
-    AOAI --> GPT
-    LC --> PG
-    PG --> PGV
-    LC --> SUD
-    LC --> PD
-    LC --> SK
-    SK --> SP
+    RRF --> FR[Fused Results]
+    FR --> RE[Reranker]
+    RE --> FINAL[Final Results]
 ```
+
+### 専門用語辞書システム
+
+```mermaid
+graph TB
+    DOC[Documents] --> TE[Term Extractor]
+    TE --> CV[C-Value Calculation]
+    TE --> EMBED[Embedding Analysis]
+    
+    CV --> TERMS[Extracted Terms]
+    EMBED --> TERMS
+    
+    TERMS --> DICT[Jargon Dictionary]
+    DICT --> QE[Query Enhancement]
+    QE --> SEARCH[Enhanced Search]
+```
+
+## 技術仕様
+
+- **フロントエンド**: Streamlit
+- **バックエンド**: Python 3.9+
+- **ベクトルデータベース**: PostgreSQL + pgvector
+- **言語モデル**: Azure OpenAI (GPT-4o, text-embedding-ada-002)
+- **日本語処理**: SudachiPy
+- **検索エンジン**: LangChain + カスタムハイブリッドリトリーバー
 
 ## ライセンス
 
 このプロジェクトはMITライセンスの下で公開されています。
-
-## 貢献
-
-プルリクエストや問題報告を歓迎します。大きな変更を行う場合は、まずissueを開いて変更内容について議論してください。
-
-## サポート
-
-問題が発生した場合や質問がある場合は、GitHubのissuesセクションで報告してください。

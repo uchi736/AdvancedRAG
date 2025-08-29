@@ -9,7 +9,7 @@ from pathlib import Path
 # 親ディレクトリをパスに追加
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from scripts.term_extractor_embeding import SynonymDetector, generate_candidates_from_chunk
+from src.scripts.term_extractor_embeding import SynonymDetector, generate_candidates_from_chunk
 
 def test_synonym_detection():
     """関連語検出のテスト"""

@@ -29,14 +29,14 @@ from langchain_core.runnables import RunnableConfig
 from langchain_community.callbacks.manager import get_openai_callback
 
 # --- Refactored Module Imports ---
-from rag.config import Config
-from rag.text_processor import JapaneseTextProcessor
-from rag.jargon import JargonDictionaryManager
-from rag.retriever import JapaneseHybridRetriever
-from rag.ingestion import IngestionHandler
-from rag.sql_handler import SQLHandler
-from rag.chains import create_chains, create_retrieval_chain, create_full_rag_chain
-from rag.evaluator import RAGEvaluator, EvaluationResults, EvaluationMetrics
+from src.rag.config import Config
+from src.rag.text_processor import JapaneseTextProcessor
+from src.rag.jargon import JargonDictionaryManager
+from src.rag.retriever import JapaneseHybridRetriever
+from src.rag.ingestion import IngestionHandler
+from src.rag.sql_handler import SQLHandler
+from src.rag.chains import create_chains, create_retrieval_chain, create_full_rag_chain
+from src.rag.evaluator import RAGEvaluator, EvaluationResults, EvaluationMetrics
 
 # load_dotenv()  # Commented out - loaded in main script
 
@@ -205,7 +205,7 @@ class RAGSystem:
         }
 
     def extract_terms(self, input_dir: str | Path, output_json: str | Path) -> None:
-        from scripts.term_extractor_embeding import run_pipeline as term_pipeline
+        from src.scripts.term_extractor_embeding import run_pipeline as term_pipeline
         asyncio.run(term_pipeline(Path(input_dir), Path(output_json)))
         print(f"[TermExtractor] Extraction complete -> {output_json}")
 

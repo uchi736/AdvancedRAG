@@ -1,9 +1,9 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-from rag.jargon import JargonDictionaryManager
-from rag.config import Config
-from utils.helpers import render_term_card
+from src.rag.jargon import JargonDictionaryManager
+from src.rag.config import Config
+from src.utils.helpers import render_term_card
 
 @st.cache_data(ttl=60, show_spinner=False)
 def get_all_terms_cached(_jargon_manager):

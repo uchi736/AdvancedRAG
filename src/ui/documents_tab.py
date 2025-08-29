@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import time
-from utils.helpers import _persist_uploaded_file, get_documents_dataframe
+from src.utils.helpers import _persist_uploaded_file, get_documents_dataframe
 
 def render_documents_tab(rag_system):
     """Renders the document management tab."""

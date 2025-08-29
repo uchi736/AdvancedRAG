@@ -1,7 +1,7 @@
 import streamlit as st
 import os
 import uuid
-from rag_system_enhanced import Config, RAGSystem
+from src.core.rag_system import Config, RAGSystem
 
 def initialize_session_state():
     """Initializes the Streamlit session state."""

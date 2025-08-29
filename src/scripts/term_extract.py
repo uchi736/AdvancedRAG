@@ -1,7 +1,7 @@
 """golden_retriever_rag.py
 ~~~~~~~~~~~~~~~~~~~~~~~
 Golden-Retriever方式を実装した専門用語対応RAGシステム
-既存のrag_system_enhanced.pyを拡張
+既存のrag_system.pyを拡張
 
 主な追加機能:
 1. 専門用語辞書（Jargon Dictionary）の管理
@@ -46,7 +46,8 @@ from langchain_community.callbacks.manager import get_openai_callback
 load_dotenv()
 
 # Import existing RAG system as base
-from rag_system_enhanced import Config as BaseConfig, RAGSystem as BaseRAGSystem, HybridRetriever
+from src.core.rag_system import Config as BaseConfig, RAGSystem as BaseRAGSystem
+from src.rag.retriever import JapaneseHybridRetriever as HybridRetriever
 
 ###############################################################################
 # Enhanced Config with Golden-Retriever settings                              #

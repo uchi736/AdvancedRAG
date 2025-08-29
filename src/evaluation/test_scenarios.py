@@ -7,8 +7,8 @@ This file contains various test scenarios for evaluating different aspects of th
 import asyncio
 from typing import List, Dict, Any
 from dotenv import load_dotenv
-from rag.config import Config
-from rag_system_enhanced import RAGSystem
+from src.rag.config import Config
+from src.core.rag_system import RAGSystem
 
 # Load environment variables
 load_dotenv()

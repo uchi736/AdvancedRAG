@@ -29,7 +29,7 @@ from sqlalchemy import create_engine, text
 # --- Project-specific imports ---
 # 親ディレクトリをパスに追加してragモジュールをインポート
 sys.path.append(str(Path(__file__).resolve().parents[1]))
-from rag.config import Config
+from src.rag.config import Config
 
 # ── ENV ───────────────────────────────────────────
 load_dotenv()

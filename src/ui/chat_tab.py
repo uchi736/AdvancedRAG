@@ -5,7 +5,7 @@ import csv
 from io import StringIO
 from langchain_core.runnables import RunnableConfig
 from typing import Dict, Any
-from utils.helpers import render_sql_result_in_chat
+from src.utils.helpers import render_sql_result_in_chat
 
 def render_chat_tab(rag_system):
     """Renders the chat tab."""

@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import List, Dict, Any
 import pandas as pd
 from dotenv import load_dotenv
-from rag.config import Config
-from rag_system_enhanced import RAGSystem
+from src.rag.config import Config
+from src.core.rag_system import RAGSystem
 
 load_dotenv()
 

@@ -1,7 +1,7 @@
 import streamlit as st
 import os
 import time
-from rag_system_enhanced import Config
+from src.core.rag_system import Config
 
 def render_settings_tab(rag_system, env_defaults):
     """Renders the detailed settings tab."""
