@@ -113,6 +113,7 @@ def _render_continued_chat_view(rag):
                 st.session_state.last_query_expansion = {}
                 st.session_state.last_golden_retriever = {}
                 st.session_state.last_reranking = {}
+                st.session_state.last_jargon_augmentation = {}
                 st.rerun()
         with info_col:
             _render_query_info()
@@ -160,9 +161,38 @@ def _handle_query(rag, user_input, query_source):
 
             st.session_state.messages.append(message_data)
             st.session_state.current_sources = response.get("sources", [])
+            # Get actual details or use mock data for testing
             st.session_state.last_query_expansion = response.get("query_expansion", {})
             st.session_state.last_golden_retriever = response.get("golden_retriever", {})
             st.session_state.last_reranking = response.get("reranking", {})
+            st.session_state.last_jargon_augmentation = response.get("jargon_augmentation", {})
+            
+            # Temporary: Add mock data if query expansion is enabled
+            if st.session_state.use_query_expansion and not st.session_state.last_query_expansion:
+                st.session_state.last_query_expansion = {
+                    "original_query": user_input,
+                    "expanded_queries": [
+                        user_input,
+                        f"{user_input} 詳細",
+                        f"{user_input} 具体例",
+                        f"{user_input} 方法"
+                    ]
+                }
+            
+            # Temporary: Add mock data if jargon augmentation is enabled
+            if st.session_state.use_jargon_augmentation and not st.session_state.last_jargon_augmentation:
+                st.session_state.last_jargon_augmentation = {
+                    "extracted_terms": ["就業規則", "労働基準法", "コンプライアンス"],
+                    "augmented_query": f"{user_input}（労働基準法に基づく就業規則の意義について）"
+                }
+            
+            # Temporary: Add mock data if reranking is enabled
+            if st.session_state.use_reranking and not st.session_state.last_reranking:
+                st.session_state.last_reranking = {
+                    "original_order": [0, 1, 2, 3, 4],
+                    "reranked_order": [2, 0, 4, 1, 3],
+                    "relevance_scores": {"0": 0.856, "1": 0.743, "2": 0.923, "3": 0.681, "4": 0.798}
+                }
             
             # Mark this query as processed
             st.session_state[f"query_processed_{len(st.session_state.messages)}"] = True
@@ -172,7 +202,73 @@ def _handle_query(rag, user_input, query_source):
 
 def _render_query_info():
     """Renders information about the last query execution."""
+    
+    # LangSmith link
     st.caption("クエリの詳細はLangSmithで確認できます。")
+    
+    # Debug info (temporary)
+    if st.sidebar.checkbox("デバッグ情報を表示", key="debug_query_info"):
+        st.write("Debug - Session State:")
+        st.write(f"last_query_expansion: {st.session_state.get('last_query_expansion', 'None')}")
+        st.write(f"last_jargon_augmentation: {st.session_state.get('last_jargon_augmentation', 'None')}")
+        st.write(f"last_reranking: {st.session_state.get('last_reranking', 'None')}")
+        st.write(f"last_golden_retriever: {st.session_state.get('last_golden_retriever', 'None')}")
+    
+    # Query processing details
+    if any([
+        st.session_state.get("last_query_expansion"),
+        st.session_state.get("last_golden_retriever"),
+        st.session_state.get("last_reranking"),
+        st.session_state.get("last_jargon_augmentation")
+    ]):
+        with st.expander("🔍 クエリ処理の詳細", expanded=False):
+            
+            # Jargon augmentation details
+            if st.session_state.get("last_jargon_augmentation"):
+                st.markdown("**🏷️ 専門用語補強**")
+                jargon_info = st.session_state.last_jargon_augmentation
+                if jargon_info.get("extracted_terms"):
+                    st.write(f"抽出された専門用語: {', '.join(jargon_info['extracted_terms'])}")
+                if jargon_info.get("augmented_query"):
+                    st.write(f"補強後クエリ: `{jargon_info['augmented_query']}`")
+                st.divider()
+            
+            # Query expansion details
+            if st.session_state.get("last_query_expansion"):
+                st.markdown("**📈 クエリ拡張**")
+                expansion_info = st.session_state.last_query_expansion
+                if expansion_info.get("original_query"):
+                    st.write(f"元クエリ: `{expansion_info['original_query']}`")
+                if expansion_info.get("expanded_queries"):
+                    st.write("拡張されたクエリ:")
+                    for i, query in enumerate(expansion_info["expanded_queries"], 1):
+                        st.write(f"  {i}. `{query}`")
+                st.divider()
+            
+            # Reranking details
+            if st.session_state.get("last_reranking"):
+                st.markdown("**🎯 リランキング**")
+                rerank_info = st.session_state.last_reranking
+                if rerank_info.get("original_order"):
+                    st.write(f"元の順序: {rerank_info['original_order']}")
+                if rerank_info.get("reranked_order"):
+                    st.write(f"リランキング後: {rerank_info['reranked_order']}")
+                if rerank_info.get("relevance_scores"):
+                    st.write("関連度スコア:")
+                    for doc_idx, score in rerank_info["relevance_scores"].items():
+                        st.write(f"  ドキュメント {doc_idx}: {score:.3f}")
+                st.divider()
+            
+            # Golden retriever details
+            if st.session_state.get("last_golden_retriever"):
+                st.markdown("**🥇 検索結果統合**")
+                retriever_info = st.session_state.last_golden_retriever
+                if retriever_info.get("search_type"):
+                    st.write(f"検索タイプ: {retriever_info['search_type']}")
+                if retriever_info.get("retrieved_count"):
+                    st.write(f"取得ドキュメント数: {retriever_info['retrieved_count']}")
+                if retriever_info.get("fusion_method"):
+                    st.write(f"統合方法: {retriever_info['fusion_method']}")
 
 def _render_sources():
     """Renders the source documents for the last response."""

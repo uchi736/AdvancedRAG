@@ -53,9 +53,9 @@ class Config:
     child_chunk_overlap: int = int(os.getenv("CHILD_CHUNK_OVERLAP", 100))
     chunk_size: int = int(os.getenv("CHUNK_SIZE", 1000)) # Kept for fallback
     chunk_overlap: int = int(os.getenv("CHUNK_OVERLAP", 200)) # Kept for fallback
-    vector_search_k: int = int(os.getenv("VECTOR_SEARCH_K", 10))
-    keyword_search_k: int = int(os.getenv("KEYWORD_SEARCH_K", 10))
-    final_k: int = int(os.getenv("FINAL_K", 5))
+    vector_search_k: int = int(os.getenv("VECTOR_SEARCH_K", 15))
+    keyword_search_k: int = int(os.getenv("KEYWORD_SEARCH_K", 15))
+    final_k: int = int(os.getenv("FINAL_K", 15))
     collection_name: str = os.getenv("COLLECTION_NAME", "documents")
     
     # 日本語検索設定

@@ -16,7 +16,9 @@
       "Read(c:\\work\\RAG\\advancedrag/**)",
       "Read(c:\\work\\RAG\\advancedrag/**)",
       "Read(c:\\work\\RAG\\advancedrag/**)",
-      "Bash(pip show:*)"
+      "Bash(pip show:*)",
+      "Bash(git log:*)",
+      "Bash(streamlit run:*)"
     ],
     "deny": [],
     "ask": []

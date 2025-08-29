@@ -3,6 +3,17 @@ from langchain_core.runnables import RunnableSequence, RunnablePassthrough, Runn
 from langchain_core.output_parsers import StrOutputParser, JsonOutputParser
 from operator import itemgetter
 from typing import List, Dict, Any
+from .prompts import (
+    get_jargon_extraction_prompt,
+    get_query_augmentation_prompt,
+    get_query_expansion_prompt,
+    get_reranking_prompt,
+    get_answer_generation_prompt,
+    get_semantic_router_prompt,
+    get_multi_table_text_to_sql_prompt,
+    get_sql_answer_generation_prompt,
+    get_synthesis_prompt
+)
 
 # Forward declaration to avoid circular import
 class JapaneseHybridRetriever:
@@ -12,7 +23,20 @@ class JargonDictionaryManager:
 
 def _format_docs(docs: List[Any]) -> str:
     """Helper function to format documents for context."""
-    return "\n\n".join([doc.page_content for doc in docs])
+    if not docs:
+        return "コンテキスト情報が見つかりませんでした。"
+    
+    formatted_docs = []
+    for doc in docs:
+        if hasattr(doc, 'page_content'):
+            content = doc.page_content.strip()
+            if content:
+                formatted_docs.append(content)
+    
+    if not formatted_docs:
+        return "ドキュメントが空です。"
+    
+    return "\n\n".join(formatted_docs)
 
 def _reciprocal_rank_fusion(doc_lists: List[List[Any]], k=60) -> List[Any]:
     """Performs Reciprocal Rank Fusion on a list of document lists."""
@@ -39,6 +63,9 @@ def _reciprocal_rank_fusion(doc_lists: List[List[Any]], k=60) -> List[Any]:
 
 def _combine_documents_simple(list_of_document_lists: List[List[Any]]) -> List[Any]:
     """A simple combination of documents, preserving order and removing duplicates."""
+    if not list_of_document_lists:
+        return []
+    
     all_docs: List[Any] = []
     seen_chunk_ids = set()
     for doc_list in list_of_document_lists:
@@ -47,6 +74,7 @@ def _combine_documents_simple(list_of_document_lists: List[List[Any]]) -> List[A
             if chunk_id and chunk_id not in seen_chunk_ids:
                 seen_chunk_ids.add(chunk_id)
                 all_docs.append(doc)
+    
     return all_docs
 
 def create_retrieval_chain(
@@ -58,10 +86,10 @@ def create_retrieval_chain(
     """
     Creates a traceable chain that handles up to the document retrieval and reranking steps.
     """
-    jargon_extraction_prompt = ChatPromptTemplate.from_template("質問から専門用語を抽出してください: {question}")
+    jargon_extraction_prompt = get_jargon_extraction_prompt(config_obj.max_jargon_terms_per_query)
     jargon_extraction_chain = jargon_extraction_prompt | llm | StrOutputParser()
 
-    query_augmentation_prompt = ChatPromptTemplate.from_template("質問: {original_question}\n専門用語定義: {jargon_definitions}\n\n上記を元に質問を補強してください:")
+    query_augmentation_prompt = get_query_augmentation_prompt()
     query_augmentation_chain = query_augmentation_prompt | llm | StrOutputParser()
 
     def augment_query_with_jargon(input_dict: dict) -> dict:
@@ -76,8 +104,14 @@ def create_retrieval_chain(
                 augmented_query = query_augmentation_chain.invoke({"original_question": original_question, "jargon_definitions": defs_text})
         return {**input_dict, "retrieval_query": augmented_query}
 
-    query_expansion_prompt = ChatPromptTemplate.from_template("質問を拡張してください: {question}")
-    query_expansion_chain = query_expansion_prompt | llm | StrOutputParser() | (lambda x: x.split('\n'))
+    query_expansion_prompt = get_query_expansion_prompt()
+    
+    def expand_query(input_dict):
+        result = (query_expansion_prompt | llm | StrOutputParser()).invoke(input_dict)
+        expanded_queries = [q.strip() for q in result.split('\n') if q.strip()]
+        return expanded_queries
+    
+    query_expansion_chain = RunnableLambda(expand_query)
 
     def get_retriever_with_search_type(input_or_config: Any):
         search_type = "ハイブリッド検索"
@@ -85,23 +119,23 @@ def create_retrieval_chain(
              search_type = input_or_config.get("configurable", {}).get("search_type", "ハイブリッド検索")
         return retriever.with_config(configurable={"search_type": search_type})
 
-    expansion_retrieval_chain = RunnablePassthrough.assign(expanded_queries=query_expansion_chain).assign(
-        doc_lists=itemgetter("expanded_queries") | RunnableLambda(lambda x: retriever.with_config(configurable={"search_type": x.get("search_type")}).batch(x["expanded_queries"], x["config"]))
-    ).assign(
-        documents=RunnableBranch(
-            (lambda x: x.get("use_rag_fusion"), itemgetter("doc_lists") | RunnableLambda(_reciprocal_rank_fusion)),
-            itemgetter("doc_lists") | RunnableLambda(_combine_documents_simple)
-        )
-    )
-    
-    def get_docs_for_batch(x):
-        retriever_with_config = retriever.with_config(configurable={"search_type": x.get("search_type")})
-        return retriever_with_config.batch(x["expanded_queries"], x.get("config"))
+    def get_docs_for_batch(input_dict):
+        """Batch retrieve documents for expanded queries"""
+        expanded_queries = input_dict.get("expanded_queries", [])
+        search_type = input_dict.get("search_type", "ハイブリッド検索")
+        config = input_dict.get("config")
+        
+        if not expanded_queries:
+            return []
+        
+        retriever_with_config = retriever.with_config(configurable={"search_type": search_type})
+        doc_lists = retriever_with_config.batch(expanded_queries, config)
+        return doc_lists
 
     expansion_retrieval_chain = RunnablePassthrough.assign(
         expanded_queries=query_expansion_chain
     ).assign(
-        doc_lists=get_docs_for_batch
+        doc_lists=RunnableLambda(get_docs_for_batch)
     ).assign(
         documents=RunnableBranch(
             (lambda x: x.get("use_rag_fusion"), itemgetter("doc_lists") | RunnableLambda(_reciprocal_rank_fusion)),
@@ -113,7 +147,7 @@ def create_retrieval_chain(
         documents=lambda x: retriever.with_config(configurable={"search_type": x.get("search_type")}).invoke(x["retrieval_query"], x.get("config"))
     )
 
-    reranking_prompt = ChatPromptTemplate.from_template("質問: {question}\n\nドキュメント:\n{documents}\n\n最も関連性の高い順にドキュメントのインデックスをカンマ区切りで返してください:")
+    reranking_prompt = get_reranking_prompt()
     reranking_chain = reranking_prompt | llm | StrOutputParser()
 
     def rerank_documents(input_dict: dict) -> List[Any]:
@@ -148,7 +182,7 @@ def create_retrieval_chain(
 
 def create_full_rag_chain(retrieval_chain: Runnable, llm: Runnable) -> Runnable:
     """Creates the final answer generation part of the RAG chain."""
-    answer_generation_prompt = ChatPromptTemplate.from_template("コンテキスト:\n{context}\n\n質問: {question}\n\n回答:")
+    answer_generation_prompt = get_answer_generation_prompt()
     
     full_chain = (
         retrieval_chain
@@ -165,32 +199,16 @@ def create_full_rag_chain(retrieval_chain: Runnable, llm: Runnable) -> Runnable:
 
 def create_chains(llm, max_sql_results: int) -> dict:
     """Creates and returns a dictionary of all LangChain runnables for SQL and Synthesis."""
-    semantic_router_prompt = ChatPromptTemplate.from_template(
-        """あなたはユーザーの質問の意図を分析し、最適な処理ルートを判断するエキスパートです。
-... (rest of the prompt is unchanged) ...
-"""
-    )
+    semantic_router_prompt = get_semantic_router_prompt()
     semantic_router_chain = semantic_router_prompt | llm | JsonOutputParser()
 
-    multi_table_text_to_sql_prompt = ChatPromptTemplate.from_template(
-        f"""あなたはPostgreSQLエキスパートです。
-... (rest of the prompt is unchanged) ...
-"""
-    )
+    multi_table_text_to_sql_prompt = get_multi_table_text_to_sql_prompt(max_sql_results)
     multi_table_sql_chain = multi_table_text_to_sql_prompt | llm | StrOutputParser()
 
-    sql_answer_generation_prompt = ChatPromptTemplate.from_template(
-        """与えられた元の質問と、それに基づいて実行されたSQLクエリ、およびその実行結果を考慮して、ユーザーにとって分かりやすい言葉で回答を生成してください。
-... (rest of the prompt is unchanged) ...
-"""
-    )
+    sql_answer_generation_prompt = get_sql_answer_generation_prompt()
     sql_answer_generation_chain = sql_answer_generation_prompt | llm | StrOutputParser()
 
-    synthesis_prompt = ChatPromptTemplate.from_template(
-        """あなたは高度なAIアシスタントです。ユーザーの質問に対して、以下の2種類の検索結果が提供されました。
-... (rest of the prompt is unchanged) ...
-"""
-    )
+    synthesis_prompt = get_synthesis_prompt()
     synthesis_chain = synthesis_prompt | llm | StrOutputParser()
 
     return {
