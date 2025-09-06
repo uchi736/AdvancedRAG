@@ -31,6 +31,7 @@ try:
     from src.ui.documents_tab import render_documents_tab
     from src.ui.settings_tab import render_settings_tab
     from src.ui.evaluation_tab import render_evaluation_tab
+    from src.scripts.knowledge_graph.graph_visualizer import render_graph_explorer
 except ImportError as e:
     st.error(f"モジュールのインポートに失敗しました: {e}")
     st.error("必要なファイルが正しい場所にあるか確認してください。")
@@ -73,7 +74,7 @@ def main():
     """, unsafe_allow_html=True)
 
     # ── Main Tabs ──────────────────────────────────────────────────────────
-    tab_titles = ["💬 Chat", "📖 Dictionary", "🗃️ Data", "📁 Documents", "🎯 Evaluation", "⚙️ Settings"]
+    tab_titles = ["💬 Chat", "📖 Dictionary", "🗃️ Data", "📁 Documents", "🎯 Evaluation", "🔗 Graph", "⚙️ Settings"]
     tabs = st.tabs(tab_titles)
 
     with tabs[0]:
@@ -92,6 +93,9 @@ def main():
         render_evaluation_tab(rag)
 
     with tabs[5]:
+        render_graph_explorer()
+
+    with tabs[6]:
         render_settings_tab(rag, ENV_DEFAULTS)
 
 if __name__ == "__main__":

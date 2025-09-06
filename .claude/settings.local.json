@@ -18,9 +18,36 @@
       "Read(c:\\work\\RAG\\advancedrag/**)",
       "Bash(pip show:*)",
       "Bash(git log:*)",
-      "Bash(streamlit run:*)"
+      "Bash(streamlit run:*)",
+      "Read(/C:\\work\\RAG\\advancedrag/**)",
+      "Read(/C:\\work\\RAG\\advancedrag\\src\\rag/**)",
+      "Read(/C:\\work\\RAG\\advancedrag\\src\\rag/**)",
+      "Read(/C:\\work\\RAG\\advancedrag\\src\\scripts/**)",
+      "Read(/C:\\work\\RAG\\advancedrag\\src\\scripts/**)",
+      "Read(/C:\\work\\RAG\\advancedrag\\src/**)",
+      "Read(/C:\\work\\RAG\\advancedrag\\src\\scripts/**)",
+      "Read(/C:\\work\\RAG\\advancedrag\\src\\scripts/**)",
+      "Bash(psql:*)",
+      "Read(/C:\\work\\RAG\\advancedrag\\src\\scripts/**)",
+      "Read(/C:\\Users\\j2370\\Desktop\\test/**)",
+      "Read(/C:\\work\\RAG\\advancedrag\\output/**)",
+      "Read(/C:\\work\\RAG\\advancedrag\\src\\scripts/**)",
+      "Read(/C:\\work\\RAG\\advancedrag\\src\\scripts/**)",
+      "Read(/C:\\work\\RAG\\advancedrag\\output/**)",
+      "Read(/C:\\work\\RAG\\advancedrag\\output/**)",
+      "Read(/C:\\work\\RAG\\advancedrag\\src\\scripts/**)",
+      "Read(/C:\\work\\RAG\\advancedrag\\output/**)",
+      "Bash(timeout 30 python src/scripts/term_clustering_analyzer.py)",
+      "Read(/C:\\work\\RAG\\advancedrag\\src\\scripts/**)",
+      "Read(/C:\\work\\RAG\\advancedrag\\src\\scripts/**)",
+      "Read(/C:\\work\\RAG\\advancedrag/**)"
     ],
     "deny": [],
     "ask": []
-  }
+  },
+  "enabledMcpjsonServers": [
+    "context7",
+    "sequential-thinking",
+    "serena"
+  ]
 }
