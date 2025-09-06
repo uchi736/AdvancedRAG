@@ -1,0 +1,114 @@
+{
+  "terms": [
+    {
+      "headword": "レシプロエンジン",
+      "synonyms": [
+        "往復動エンジン"
+      ],
+      "definition": "ピストンの往復運動を利用して動力を得る内燃機関の一種。"
+    },
+    {
+      "headword": "6L28ADF",
+      "synonyms": [],
+      "definition": "IHIが開発したアンモニア燃料対応の舶用レシプロエンジンの型式名。"
+    },
+    {
+      "headword": "NEDO",
+      "synonyms": [
+        "新エネルギー・産業技術総合開発機構"
+      ],
+      "definition": "日本の国立研究開発法人で、エネルギーや環境技術の研究開発を推進する機関。"
+    },
+    {
+      "headword": "クランクケース換気システム",
+      "synonyms": [
+        "クランクケース",
+        "エンジンケース"
+      ],
+      "definition": "エンジン内部のクランクシャフトを収容するケースで、潤滑油の保持やガスの流入防止機能を持つ。"
+    },
+    {
+      "headword": "日本産業衛生学会",
+      "synonyms": [
+        "産業衛生学会"
+      ],
+      "definition": "産業衛生に関する研究や基準設定を行う公益社団法人。"
+    },
+    {
+      "headword": "GHG削減率",
+      "synonyms": [
+        "GHG",
+        "温室効果ガス",
+        "温室効果ガス削減率"
+      ],
+      "definition": "地球温暖化を引き起こすガスで、主にCO2やN2Oなどが含まれる。"
+    },
+    {
+      "headword": "ピストンリング",
+      "synonyms": [
+        "リングシール"
+      ],
+      "definition": "エンジンのピストンに装着される部品で、燃焼室の密閉性を保つ役割を持つ。"
+    },
+    {
+      "headword": "MJ",
+      "synonyms": [
+        "メガジュール"
+      ],
+      "definition": "エネルギーの単位で、1MJは100万ジュールに相当する。"
+    },
+    {
+      "headword": "2重壁管構造",
+      "synonyms": [
+        "二重管構造"
+      ],
+      "definition": "漏えい防止のために内外二重の壁を持つ配管設計。"
+    },
+    {
+      "headword": "マイクロパイロット方式",
+      "synonyms": [
+        "微量燃料着火方式"
+      ],
+      "definition": "少量の燃料を用いて予混合気を着火するエンジン燃焼技術。"
+    },
+    {
+      "headword": "混焼率",
+      "synonyms": [
+        "燃料混合率"
+      ],
+      "definition": "燃料全体の投入熱量に対する特定燃料の熱量割合を示す指標。"
+    },
+    {
+      "headword": "N2O",
+      "synonyms": [
+        "亜酸化窒素"
+      ],
+      "definition": "温室効果ガスの一種で、CO2の約265倍の温室効果を持つ。"
+    },
+    {
+      "headword": "NOx",
+      "synonyms": [
+        "窒素酸化物"
+      ],
+      "definition": "燃焼過程で生成される大気汚染物質で、環境規制の対象となる。"
+    },
+    {
+      "headword": "IMO",
+      "synonyms": [
+        "International Maritime Organization",
+        "国際海事機関"
+      ],
+      "definition": "海運業界の国際規制を策定する国連の専門機関。"
+    },
+    {
+      "headword": "E3モード",
+      "synonyms": [],
+      "definition": "舶用エンジンの性能試験で用いられる国際基準の運転サイクル。"
+    },
+    {
+      "headword": "日本海事協会",
+      "synonyms": [],
+      "definition": "船舶や海洋構造物の安全性や環境性能を評価・認証する日本の一般財団法人。"
+    }
+  ]
+}

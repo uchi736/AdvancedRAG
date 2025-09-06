@@ -2,31 +2,145 @@
   "terms": [
     {
       "headword": "レシプロエンジン",
-      "synonyms": [],
-      "definition": "ピストンの往復運動を利用して動力を得る内燃機関。",
+      "synonyms": [
+        "往復動エンジン"
+      ],
+      "definition": "ピストンの往復運動を利用して動力を得る内燃機関の一種。",
       "category": "技術"
     },
     {
-      "headword": "NOX",
+      "headword": "6L28ADF",
+      "synonyms": [],
+      "definition": "アンモニア燃料対応の舶用レシプロエンジンの型式名。",
+      "category": "技術"
+    },
+    {
+      "headword": "NEDO",
       "synonyms": [
-        "窒素酸化物"
+        "新エネルギー・産業技術総合開発機構"
       ],
-      "definition": "燃焼過程で生成される大気汚染物質で、環境規制の対象。",
+      "definition": "日本の研究開発法人で、エネルギーや環境技術の開発を推進する機関。",
       "category": "規制"
     },
     {
-      "headword": "クランクケース",
-      "synonyms": [],
-      "definition": "エンジン内部の部品を収容するケースで、潤滑油の管理も行う。",
+      "headword": "アンモニア燃料",
+      "synonyms": [
+        "NH3燃料"
+      ],
+      "definition": "温室効果ガス削減を目的に使用される二酸化炭素を排出しない燃料。",
       "category": "技術"
     },
     {
-      "headword": "IHI",
+      "headword": "IMO NOx規制",
       "synonyms": [
-        "石川島播磨重工業"
+        "NOx",
+        "国際海事機関",
+        "International Maritime Organization",
+        "国際海事機関NOx規制",
+        "窒素酸化物",
+        "IMO"
       ],
-      "definition": "日本の重工業メーカーで、エンジンや環境技術を開発。",
-      "category": "その他"
+      "definition": "国際海事機関が定める船舶エンジンの窒素酸化物排出基準。",
+      "category": "規制"
+    },
+    {
+      "headword": "GHG削減率",
+      "synonyms": [
+        "GHG",
+        "温室効果ガス",
+        "温室効果ガス削減率"
+      ],
+      "definition": "地球温暖化を引き起こすガスの総称で、CO2やN2Oなどが含まれる。",
+      "category": "環境"
+    },
+    {
+      "headword": "クランクケース換気システム",
+      "synonyms": [
+        "エンジンケース",
+        "クランクケース"
+      ],
+      "definition": "エンジンの内部部品を収容する外殻部分で、潤滑油を保持する役割も持つ。",
+      "category": "技術"
+    },
+    {
+      "headword": "日本産業衛生学会",
+      "synonyms": [
+        "産業衛生学会"
+      ],
+      "definition": "産業衛生に関する研究と規制を行う公益社団法人。",
+      "category": "規制"
+    },
+    {
+      "headword": "ピストンリング",
+      "synonyms": [
+        "リングシール"
+      ],
+      "definition": "ピストンとシリンダ壁の間に装着される部品で、密閉性を確保する。",
+      "category": "技術"
+    },
+    {
+      "headword": "マイクロパイロット方式",
+      "synonyms": [
+        "微量燃料着火方式"
+      ],
+      "definition": "少量の燃料を用いて予混合気を多点同時着火するエンジン技術。",
+      "category": "技術"
+    },
+    {
+      "headword": "混焼率",
+      "synonyms": [
+        "燃料混合比"
+      ],
+      "definition": "燃料全体の投入熱量に対する特定燃料の熱量割合。",
+      "category": "分析"
+    },
+    {
+      "headword": "曝露限界濃度",
+      "synonyms": [
+        "許容濃度"
+      ],
+      "definition": "作業員に健康上の悪影響がないとされる物質濃度の上限値。",
+      "category": "安全"
+    },
+    {
+      "headword": "ブローバイガス",
+      "synonyms": [
+        "漏れガス"
+      ],
+      "definition": "燃焼ガスの一部がピストンリングの隙間を通じてクランクケース内に流入する現象。",
+      "category": "技術"
+    },
+    {
+      "headword": "二重壁管構造",
+      "synonyms": [
+        "二重配管"
+      ],
+      "definition": "漏えい防止のために二重の壁で構成された配管設計。",
+      "category": "安全"
+    },
+    {
+      "headword": "E3モード",
+      "synonyms": [],
+      "definition": "舶用エンジンの性能試験で使用される標準的なテストサイクル。",
+      "category": "分析"
+    },
+    {
+      "headword": "アンモニアモード",
+      "synonyms": [],
+      "definition": "アンモニアを燃料として使用するエンジン運転モード。",
+      "category": "技術"
+    },
+    {
+      "headword": "マイクロパイロット燃料",
+      "synonyms": [],
+      "definition": "アンモニア燃料の着火を補助するために使用される少量の燃料。",
+      "category": "技術"
+    },
+    {
+      "headword": "日本海事協会",
+      "synonyms": [],
+      "definition": "船舶や海事関連機器の安全性を認証する日本の財団法人。",
+      "category": "規制"
     }
   ]
 }

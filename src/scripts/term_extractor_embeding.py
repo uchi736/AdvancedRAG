@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from concurrent.futures import ThreadPoolExecutor
+import fitz  # PyMuPDF
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -44,7 +45,6 @@ if not all([cfg.azure_openai_api_key, cfg.azure_openai_endpoint, cfg.azure_opena
 # ── LangChain imports ─────────────────────────────
 from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings
 from langchain_community.document_loaders import (
-    PyPDFLoader,
     UnstructuredFileLoader,
     Docx2txtLoader,
     TextLoader,
@@ -185,7 +185,6 @@ class Term(BaseModel):
     headword: str = Field(description="専門用語の見出し語")
     synonyms: List[str] = Field(default_factory=list, description="類義語・別名のリスト")
     definition: str = Field(description="30-50字程度の簡潔な定義")
-    category: Optional[str] = Field(default=None, description="カテゴリ名")
 
 class TermList(BaseModel):
     """用語リストの構造"""
@@ -206,12 +205,13 @@ json_parser = JsonOutputParser(pydantic_object=TermList)
 # ── Prompts ───────────────────────────────────────
 validation_prompt = ChatPromptTemplate.from_messages([
     ("system", """あなたは専門分野の用語抽出専門家です。
+未知語・専門用語のみを厳密に選定してください。
 
 【専門用語の判定基準】
 1. ドメイン固有性：その分野でのみ、または特別な意味で使われる
 2. 概念の複合性：複数の概念が結合して新しい意味を形成している
 3. 定義の必要性：一般の人には説明が必要な概念である
-4. 文脈での重要性：文書の主題理解に不可欠である
+4. 辞書非掲載性：一般的な国語辞典には載っていない、または特殊な意味を持つ
 
 【類義語・関連語の判定基準】
 1. 表記違い：同じ概念の異なる表現（例：医薬品/薬品、品質管理/QC）
@@ -220,17 +220,18 @@ validation_prompt = ChatPromptTemplate.from_messages([
 4. 同じカテゴリの関連語：（例：原薬/添加剤/賦形剤）
 
 【必ず除外すべき用語】
+- 単独の年号：2024、2025、2040、2050など
+- 数値表現：90%以上、70%以上、50%、100、265など
 - 一般的すぎる単語：システム、データ、情報、処理、管理、方法、状態、結果、目的、対象、内容
 - 単純な動作や状態：実施、確認、作成、使用、記録、設定、表示、入力、出力
 - 文脈で専門的意味を持たない一般名詞
-- 単なる数量表現や時間表現
+- 単なる時間表現や期間
 
 【抽出ルール】
 - 候補リストにない用語は絶対に追加しない
 - 類義語は正確に識別し、最も一般的な表記を見出し語とする
 - 検出された関連語候補を参考に、synonymsフィールドに適切に設定する
 - 定義は30-50字で、その分野の初学者にも理解できる表現にする
-- カテゴリは以下から選択：「規制」「製造」「品質」「技術」「管理」「安全」「分析」「その他」
 
 【重要度評価】
 各候補について以下の観点で評価：
@@ -276,8 +277,39 @@ SPLITTER = RecursiveCharacterTextSplitter(
     separators=["\n\n", "。", "\n", " "],
 )
 
+# PyMuPDFを使用したカスタムPDFローダー
+class PyMuPDFLoader:
+    """PyMuPDF (fitz) を使用したPDFローダー"""
+    def __init__(self, file_path: str):
+        self.file_path = file_path
+    
+    def load(self) -> List[Document]:
+        """PDFファイルを読み込んでDocumentオブジェクトのリストを返す"""
+        try:
+            doc = fitz.open(self.file_path)
+            documents = []
+            
+            for page_num, page in enumerate(doc):
+                text = page.get_text()
+                if text.strip():  # 空白ページはスキップ
+                    documents.append(
+                        Document(
+                            page_content=text,
+                            metadata={
+                                "source": self.file_path,
+                                "page": page_num + 1
+                            }
+                        )
+                    )
+            
+            doc.close()
+            return documents
+        except Exception as e:
+            logger.error(f"Failed to load PDF {self.file_path}: {e}")
+            raise e
+
 LOADER_MAP = {
-    ".pdf": PyPDFLoader,
+    ".pdf": PyMuPDFLoader,
     ".docx": Docx2txtLoader,
     ".doc": Docx2txtLoader,
     ".txt": TextLoader,
@@ -558,13 +590,13 @@ def generate_candidates_from_chunk(text: str) -> Tuple[List[str], Dict[str, List
             
             # 品詞詳細による判定
             if pos_main == '名詞':
-                # 除外する品詞細分類
-                if pos_sub in ['非自立', '代名詞', '数詞', '接尾']:
+                # 除外する品詞細分類（数詞は除外しない）
+                if pos_sub in ['非自立', '代名詞', '接尾']:
                     if len(current_phrase) >= 2:
                         noun_phrases.append(current_phrase[:])
                     current_phrase = []
-                # 重要な品詞細分類を優先
-                elif pos_sub in ['サ変接続', '一般', '固有名詞', '複合']:
+                # 重要な品詞細分類を優先（数詞も含める）
+                elif pos_sub in ['サ変接続', '一般', '固有名詞', '複合', '数詞']:
                     current_phrase.append({
                         'surface': token.normalized_form(),
                         'pos_sub': pos_sub,
@@ -673,8 +705,8 @@ def generate_candidates_from_chunk(text: str) -> Tuple[List[str], Dict[str, List
                 pos_bonus
             )
             
-            # 最低頻度フィルタ（共起スコアが高い場合は例外）
-            if info['freq'] >= 2 or cooc_score >= 3.0:
+            # 最低頻度フィルタ（緩和版）
+            if info['freq'] >= 1 or cooc_score >= 1.0:
                 scored_candidates.append((candidate, total_score))
         
         # スコアでソートして上位を選択
@@ -684,7 +716,7 @@ def generate_candidates_from_chunk(text: str) -> Tuple[List[str], Dict[str, List
         final_candidates = []
         seen_substrings = set()
         
-        for candidate, score in scored_candidates[:150]:
+        for candidate, score in scored_candidates[:300]:
             # 既に選ばれた長い用語の部分文字列は除外
             is_substring = False
             for seen in seen_substrings:
@@ -695,7 +727,7 @@ def generate_candidates_from_chunk(text: str) -> Tuple[List[str], Dict[str, List
             if not is_substring and score > 0:
                 final_candidates.append(candidate)
                 seen_substrings.add(candidate)
-                if len(final_candidates) >= 100:
+                if len(final_candidates) >= 200:
                     break
         
         # 関連語検出
@@ -705,7 +737,7 @@ def generate_candidates_from_chunk(text: str) -> Tuple[List[str], Dict[str, List
             noun_phrases
         )
         
-        logger.debug(f"候補語生成完了: {len(final_candidates)}件, 関連語: {len(detected_synonyms)}グループ")
+        logger.info(f"候補語生成完了: {len(final_candidates)}件（フィルタ前: {len(scored_candidates)}件）, 関連語: {len(detected_synonyms)}グループ")
         return final_candidates, detected_synonyms
         
     except Exception as e:
@@ -773,6 +805,7 @@ async def extract_with_context(chunk_data: Dict[str, str]) -> Dict:
         "synonym_hints": synonym_hints
     }
     
+    # LLMによる専門用語判定と定義生成
     extraction_chain = (validation_prompt | llm | json_parser).with_config({"run_name": "term_validation"})
     return await extraction_chain.ainvoke(prompt_data)
 

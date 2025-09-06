@@ -25,7 +25,6 @@ from sqlalchemy import create_engine, text, inspect as sqlalchemy_inspect
 
 # LangChain imports
 from langchain_community.document_loaders import (
-    PyPDFLoader,
     TextLoader,
     UnstructuredFileLoader,
     Docx2txtLoader,

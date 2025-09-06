@@ -4,7 +4,7 @@ from sqlalchemy import create_engine, text
 from typing import List
 
 from langchain_community.document_loaders import (
-    PyPDFLoader, TextLoader, Docx2txtLoader
+    TextLoader, Docx2txtLoader
 )
 try:
     from langchain_community.document_loaders import TextractLoader
