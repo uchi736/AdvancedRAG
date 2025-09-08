@@ -13,6 +13,7 @@ except ImportError:
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from .document_parser import DocumentParser
+from .pdf_processors import PyMuPDFProcessor, AzureDocumentIntelligenceProcessor
 
 class IngestionHandler:
     def __init__(self, config, vector_store, text_processor, connection_string):
@@ -20,7 +21,22 @@ class IngestionHandler:
         self.vector_store = vector_store
         self.text_processor = text_processor
         self.connection_string = connection_string
-        self.parser = DocumentParser(config)
+        
+        # PDF処理方式の選択（後方互換性のため、DocumentParserをデフォルトとして維持）
+        pdf_processor_type = getattr(config, 'pdf_processor_type', 'legacy')
+        
+        if pdf_processor_type == 'azure_di':
+            # Azure Document Intelligenceを使用
+            self.pdf_processor = AzureDocumentIntelligenceProcessor(config)
+            self.parser = None  # 後方互換性のため保持
+        elif pdf_processor_type == 'pymupdf':
+            # 新しいPyMuPDFプロセッサを使用
+            self.pdf_processor = PyMuPDFProcessor(config)
+            self.parser = None  # 後方互換性のため保持
+        else:
+            # レガシーモード：既存のDocumentParserを使用（デフォルト）
+            self.parser = DocumentParser(config)
+            self.pdf_processor = None
 
     def load_documents(self, paths: List[str]) -> List[Document]:
         docs: List[Document] = []
@@ -32,8 +48,12 @@ class IngestionHandler:
             suf = path.suffix.lower()
             try:
                 if suf == ".pdf":
-                    # Use the new DocumentParser for PDFs
-                    parsed_elements = self.parser.parse_pdf(str(path))
+                    # PDFプロセッサまたはレガシーパーサーを使用
+                    if self.pdf_processor:
+                        parsed_elements = self.pdf_processor.parse_pdf(str(path))
+                    else:
+                        # レガシーモード：既存のDocumentParserを使用
+                        parsed_elements = self.parser.parse_pdf(str(path))
                     
                     # 1. Process text elements
                     for text, metadata in parsed_elements["texts"]:
@@ -42,7 +62,10 @@ class IngestionHandler:
                     # 2. Process image elements
                     print(f"Found {len(parsed_elements['images'])} images. Summarizing...")
                     for image_path, metadata in parsed_elements["images"]:
-                        summary = self.parser.summarize_image(image_path)
+                        if self.pdf_processor:
+                            summary = self.pdf_processor.summarize_image(image_path)
+                        else:
+                            summary = self.parser.summarize_image(image_path)
                         summary_metadata = metadata.copy()
                         summary_metadata["type"] = "image_summary"
                         summary_metadata["original_image_path"] = image_path
@@ -51,7 +74,10 @@ class IngestionHandler:
                     # 3. Process table elements
                     print(f"Found {len(parsed_elements['tables'])} tables. Converting to Markdown...")
                     for table_data, metadata in parsed_elements["tables"]:
-                        markdown_table = self.parser.format_table_as_markdown(table_data)
+                        if self.pdf_processor:
+                            markdown_table = self.pdf_processor.format_table_as_markdown(table_data)
+                        else:
+                            markdown_table = self.parser.format_table_as_markdown(table_data)
                         if markdown_table:
                             table_metadata = metadata.copy()
                             table_metadata["type"] = "table"

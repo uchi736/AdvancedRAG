@@ -80,3 +80,13 @@ class Config:
     enable_doc_summarization: bool = os.getenv("ENABLE_DOC_SUMMARIZATION", "true").lower() == "true"
     enable_metadata_enrichment: bool = os.getenv("ENABLE_METADATA_ENRICHMENT", "true").lower() == "true"
     confidence_threshold: float = float(os.getenv("CONFIDENCE_THRESHOLD", 0.2))
+    
+    # PDF Processing settings
+    pdf_processor_type: str = os.getenv("PDF_PROCESSOR_TYPE", "pymupdf")  # "pymupdf" or "azure_di"
+    
+    # Azure Document Intelligence settings
+    azure_di_endpoint: Optional[str] = os.getenv("AZURE_DI_ENDPOINT")
+    azure_di_api_key: Optional[str] = os.getenv("AZURE_DI_API_KEY")
+    azure_di_model: str = os.getenv("AZURE_DI_MODEL", "prebuilt-layout")
+    save_markdown: bool = os.getenv("SAVE_MARKDOWN", "false").lower() == "true"
+    markdown_output_dir: str = os.getenv("MARKDOWN_OUTPUT_DIR", "output/markdown")

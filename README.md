@@ -20,6 +20,7 @@
 - **日本語特化**: SudachiPyによる日本語形態素解析を使用し、日本語の文書処理に最適化されたハイブリッド検索を実現します。
 - **Text-to-SQL**: 自然言語のクエリを解析し、アップロードされたCSV/Excelファイルからのデータベースファイルに対して自動的にSQLクエリを生成します。
 - **専門用語辞書 (Golden-Retriever)**: アップロードから専門用語をその定義を抽出し、辞書を構築。この辞書を用いてクエリの理解を深め、よりコンテキストに沿った回答を生成します。
+- **複数のPDF処理エンジン**: PyMuPDF（高速）とAzure Document Intelligence（高精度）を選択可能。用途に応じて最適な処理方式を選択できます。
 - **評価システム**: Recall、Precision、MRR、nDCG、Hit Rateなどの指標でRAGシステムの検索精度を定量的に評価できます。
 - **ユーザーフレンドリーなUI**: タブ構成のインターフェース、メッセージ履歴、ドキュメント管理など、使いやすいストリームリットアプリケーションと洗練された設計です。
 
@@ -38,12 +39,17 @@
 │   ├── rag/                    # RAGシステムのコアモジュール
 │   │   ├── chains.py           # LangChainのチェーンとプロンプト設定
 │   │   ├── config.py           # 設定ファイル(Config)
+│   │   ├── document_parser.py  # レガシーPDF処理（PyMuPDF）
 │   │   ├── evaluator.py        # 評価システムモジュール
 │   │   ├── ingestion.py        # ドキュメントの取り込みと処理
 │   │   ├── jargon.py           # 専門用語辞書の管理
 │   │   ├── retriever.py        # ハイブリッド検索リトリーバー
 │   │   ├── sql_handler.py      # Text-to-SQL機能の処理
-│   │   └── text_processor.py   # 日本語テキスト処理
+│   │   ├── text_processor.py   # 日本語テキスト処理
+│   │   └── pdf_processors/     # PDF処理プロセッサ
+│   │       ├── base_processor.py      # 抽象基底クラス
+│   │       ├── pymupdf_processor.py   # PyMuPDF実装
+│   │       └── azure_di_processor.py  # Azure Document Intelligence実装
 │   ├── ui/                     # UIコンポーネント
 │   │   ├── chat_tab.py         # チャット画面
 │   │   ├── data_tab.py         # データ管理画面
@@ -94,6 +100,15 @@
     - `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`
     - `AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME`
     - `PG_URL` (PostgreSQLの接続URL) または `DB_*` の各項目
+    
+    **PDF処理方式の設定（オプション）**:
+    - `PDF_PROCESSOR_TYPE`: "legacy" | "pymupdf" | "azure_di" (デフォルト: "legacy")
+    
+    **Azure Document Intelligence設定（azure_di使用時のみ）**:
+    - `AZURE_DI_ENDPOINT`: Azure Document IntelligenceのエンドポイントURL
+    - `AZURE_DI_API_KEY`: APIキー
+    - `AZURE_DI_MODEL`: 使用モデル（デフォルト: "prebuilt-layout"）
+    - `SAVE_MARKDOWN`: Markdown保存フラグ（デフォルト: "false"）
 
 ## 使い方
 
@@ -102,6 +117,30 @@
 ```bash
 streamlit run app.py
 ```
+
+### PDF処理方式の選択
+
+本システムは3つのPDF処理方式をサポートしています：
+
+1. **レガシー (既存のDocumentParser)**
+   - デフォルトの処理方式
+   - 既存の安定した実装
+
+2. **PyMuPDF (高速・軽量)**
+   - 高速なPDF処理
+   - メモリ効率が良い
+   - テキスト、画像、テーブルの抽出
+
+3. **Azure Document Intelligence (高精度)**
+   - 高精度なレイアウト解析
+   - Markdown形式での出力
+   - 複雑な文書構造の正確な抽出
+   - クラウドベースの処理
+
+処理方式は以下の方法で選択できます：
+- **UIから**: サイドバーまたは詳細設定タブで選択
+- **環境変数**: `.env`ファイルで`PDF_PROCESSOR_TYPE`を設定
+- **プログラム**: Configオブジェクトで`pdf_processor_type`を指定
 
 ## ナレッジグラフ エクスプローラー（新機能）
 
@@ -278,6 +317,9 @@ graph TB
 - **言語モデル**: Azure OpenAI (GPT-4o, text-embedding-ada-002)
 - **日本語処理**: SudachiPy
 - **検索エンジン**: LangChain + カスタムハイブリッドリトリーバー
+- **PDF処理**: 
+  - PyMuPDF (fitz): 高速・軽量処理
+  - Azure Document Intelligence: 高精度レイアウト解析・Markdown出力
 
 ## 専門用語抽出と自動クラスタリング機能
 

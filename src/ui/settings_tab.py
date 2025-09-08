@@ -34,6 +34,7 @@ def render_settings_tab(rag_system, env_defaults):
             _render_chunking_settings(current_values, temp_default_cfg)
         with col2:
             _render_search_rag_settings(current_values, temp_default_cfg)
+            _render_pdf_processing_settings(current_values, temp_default_cfg)
 
         st.markdown("---")
         st.markdown("#### 🗄️ データベース設定 (変更には注意が必要です)")
@@ -135,6 +136,70 @@ def _render_db_auth_settings(values, defaults):
     current_fts = values.get("fts_language", defaults.fts_language)
     fts_idx = fts_opts.index(current_fts) if current_fts in fts_opts else 0
     st.session_state.form_values['fts_language'] = st.selectbox("FTS言語", fts_opts, index=fts_idx, key="setting_fts_lang_v7")
+
+def _render_pdf_processing_settings(values, defaults):
+    st.markdown("#### 📑 PDF処理設定")
+    
+    # PDF処理方式の選択
+    pdf_options = {
+        "legacy": "レガシー (既存のDocumentParser)",
+        "pymupdf": "PyMuPDF (高速・軽量)",
+        "azure_di": "Azure Document Intelligence (高精度・Markdown出力)"
+    }
+    current_pdf = values.get("pdf_processor_type", defaults.pdf_processor_type)
+    if current_pdf not in pdf_options:
+        current_pdf = "legacy"
+    
+    st.session_state.form_values['pdf_processor_type'] = st.selectbox(
+        "PDF処理方式",
+        options=list(pdf_options.keys()),
+        format_func=lambda x: pdf_options[x],
+        index=list(pdf_options.keys()).index(current_pdf),
+        key="setting_pdf_processor_v7",
+        help="PDFファイルの処理方法を選択します。Azure DIを使用する場合は下記の設定が必要です。"
+    )
+    
+    # Azure Document Intelligence設定（選択時のみ表示）
+    if st.session_state.form_values['pdf_processor_type'] == "azure_di":
+        with st.expander("Azure Document Intelligence 設定", expanded=True):
+            st.session_state.form_values['azure_di_endpoint'] = st.text_input(
+                "Azure DI エンドポイント",
+                value=values.get("azure_di_endpoint", ""),
+                key="setting_azure_di_endpoint_v7",
+                placeholder="https://your-resource.cognitiveservices.azure.com/"
+            )
+            st.session_state.form_values['azure_di_api_key'] = st.text_input(
+                "Azure DI APIキー",
+                value=values.get("azure_di_api_key", ""),
+                type="password",
+                key="setting_azure_di_key_v7"
+            )
+            
+            model_options = ["prebuilt-layout", "prebuilt-document", "prebuilt-read"]
+            current_model = values.get("azure_di_model", defaults.azure_di_model)
+            if current_model not in model_options:
+                current_model = "prebuilt-layout"
+            
+            st.session_state.form_values['azure_di_model'] = st.selectbox(
+                "使用モデル",
+                options=model_options,
+                index=model_options.index(current_model),
+                key="setting_azure_di_model_v7",
+                help="prebuilt-layout: 高精度なレイアウト解析、prebuilt-document: 汎用文書処理、prebuilt-read: OCR特化"
+            )
+            
+            st.session_state.form_values['save_markdown'] = st.checkbox(
+                "Markdownファイルとして保存",
+                value=values.get("save_markdown", defaults.save_markdown),
+                key="setting_save_markdown_v7",
+                help="処理結果をMarkdownファイルとして保存します"
+            )
+    else:
+        # Azure DI設定はデフォルト値に
+        st.session_state.form_values['azure_di_endpoint'] = values.get("azure_di_endpoint", "")
+        st.session_state.form_values['azure_di_api_key'] = values.get("azure_di_api_key", "")
+        st.session_state.form_values['azure_di_model'] = defaults.azure_di_model
+        st.session_state.form_values['save_markdown'] = defaults.save_markdown
 
 def _render_sql_analytics_settings(values, defaults):
     st.session_state.form_values['max_sql_results'] = st.number_input("SQL最大取得行数", 10, 10000, int(values.get("max_sql_results", defaults.max_sql_results)), 10, key="setting_max_sql_results_v7")
