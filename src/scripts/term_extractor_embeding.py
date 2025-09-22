@@ -81,103 +81,80 @@ embeddings = AzureOpenAIEmbeddings(
     azure_deployment=cfg.azure_openai_embedding_deployment_name
 )
 
-# ── Vector Store Components ──────────────────────
-class VectorStore:
-    """PGVectorを使用したベクトルストア"""
-    
-    def __init__(self, connection_string: str, collection_name: str):
-        self.connection_string = connection_string
-        self.collection_name = collection_name
-        self.vector_store: Optional[PGVector] = None
+# ── Vector Store Setup ──────────────────────
+# 既存のRAGシステムのベクトルストアを再利用
+vector_store = PGVector(
+    collection_name=cfg.collection_name,  # "documents" - RAGシステムと同じコレクション
+    connection_string=PG_URL,
+    embedding_function=embeddings,
+    pre_delete_collection=False  # 既存のコレクションを削除しない
+)
 
-    def _sync_initialize(self, chunks: List[str], chunk_ids: List[str]):
-        """同期的にPGVectorを初期化"""
-        logger.info(f"Initializing PGVector with {len(chunks)} chunks...")
-        self.vector_store = PGVector.from_texts(
-            texts=chunks,
-            embedding=embeddings,
-            collection_name=self.collection_name,
-            ids=chunk_ids,
-            connection_string=self.connection_string,
-            pre_delete_collection=True,
+async def search_similar_chunks(query_text: str, current_chunk_id: str, n_results: int = 3) -> str:
+    """既存のRAGベクトルストアから類似文脈を取得"""
+    try:
+        # クエリを重要な部分に絞る（最初と最後の文を使用）
+        sentences = query_text.split('。')
+        if len(sentences) > 3:
+            # 最初の2文と最後の1文を結合してクエリとする
+            query = '。'.join(sentences[:2] + [sentences[-1]])
+        else:
+            query = query_text[:1000]  # 最大1000文字に制限
+
+        # 類似度検索（同期版を使用）
+        results_with_scores = vector_store.similarity_search_with_score(
+            query,
+            k=n_results * 2  # 2倍取得してフィルタリング
         )
-        logger.info("PGVector initialized successfully.")
 
-    async def initialize(self, chunks: List[str], chunk_ids: List[str]):
-        """チャンクをエンベディング化してベクトルストアに保存"""
-        loop = asyncio.get_running_loop()
-        with ThreadPoolExecutor() as pool:
-            await loop.run_in_executor(pool, self._sync_initialize, chunks, chunk_ids)
-    
-    async def search_similar_chunks(self, query_text: str, current_chunk_id: str, n_results: int = 3) -> str:
-        """改良版：より関連性の高い文脈を取得"""
-        if not self.vector_store:
-            return "関連情報なし"
-        
-        try:
-            # クエリを重要な部分に絞る（最初と最後の文を使用）
-            sentences = query_text.split('。')
-            if len(sentences) > 3:
-                # 最初の2文と最後の1文を結合してクエリとする
-                query = '。'.join(sentences[:2] + [sentences[-1]])
-            else:
-                query = query_text[:1000]  # 最大1000文字に制限
-            
-            # 類似度検索（より多く取得して精選）
-            results_with_scores = await self.vector_store.asimilarity_search_with_score(
-                query=query,
-                k=n_results * 2  # 2倍取得してフィルタリング
-            )
-            
-            # スコアと内容の両方で選別
-            related_contexts = []
-            seen_contents = set()
-            
-            # 動的閾値の計算（上位スコアの平均値）
-            if results_with_scores:
-                top_scores = [score for _, score in results_with_scores[:3]]
-                if top_scores:
-                    dynamic_threshold = sum(top_scores) / len(top_scores) * 0.7  # 上位平均の70%
-                else:
-                    dynamic_threshold = 0.7
+        # スコアと内容の両方で選別
+        related_contexts = []
+        seen_contents = set()
+
+        # 動的閾値の計算（上位スコアの平均値）
+        if results_with_scores:
+            top_scores = [score for _, score in results_with_scores[:3]]
+            if top_scores:
+                dynamic_threshold = sum(top_scores) / len(top_scores) * 0.7  # 上位平均の70%
             else:
                 dynamic_threshold = 0.7
-            
-            for doc, score in results_with_scores:
-                # 自身のチャンクは除外
-                if doc.metadata.get("id") == current_chunk_id:
-                    continue
-                
-                # 動的閾値でフィルタリング
-                if score < dynamic_threshold:
-                    continue
-                
-                # 内容の重複チェック（最初の200文字でハッシュ）
-                content_hash = hash(doc.page_content[:200])
-                if content_hash in seen_contents:
-                    continue
-                seen_contents.add(content_hash)
-                
-                related_contexts.append((doc.page_content, score))
-                
-                if len(related_contexts) >= n_results:
-                    break
-            
-            # スコア順に整形して返す
-            if related_contexts:
-                return "\n\n".join([
-                    f"[関連文脈 {i+1} (類似度: {score:.2f})]\n{content[:500]}"  # 500文字に制限
-                    for i, (content, score) in enumerate(related_contexts)
-                ])
-            else:
-                return "関連情報なし"
-            
-        except Exception as e:
-            logger.error(f"Error searching similar chunks: {e}")
+        else:
+            dynamic_threshold = 0.7
+
+        for doc, score in results_with_scores:
+            # 自身のチャンクは除外（chunk_idまたはidで判定）
+            doc_id = doc.metadata.get("chunk_id") or doc.metadata.get("id")
+            if doc_id == current_chunk_id:
+                continue
+
+            # 動的閾値でフィルタリング
+            if score < dynamic_threshold:
+                continue
+
+            # 内容の重複チェック（最初の200文字でハッシュ）
+            content_hash = hash(doc.page_content[:200])
+            if content_hash in seen_contents:
+                continue
+            seen_contents.add(content_hash)
+
+            related_contexts.append((doc.page_content, score))
+
+            if len(related_contexts) >= n_results:
+                break
+
+        # スコア順に整形して返す
+        if related_contexts:
+            return "\n\n".join([
+                f"[関連文脈 {i+1} (類似度: {score:.2f})]\n{content[:500]}"  # 500文字に制限
+                for i, (content, score) in enumerate(related_contexts)
+            ])
+        else:
             return "関連情報なし"
 
-# グローバルなベクトルストアインスタンス
-vector_store = VectorStore(PG_URL, "term_extraction_chunks")
+    except Exception as e:
+        logger.error(f"Error searching similar chunks: {e}")
+        logger.info(f"Note: Ensure documents are already ingested in collection '{cfg.collection_name}'")
+        return "関連情報なし"
 
 # ── Pydantic Models for Structured Output ────────
 class Term(BaseModel):
@@ -791,7 +768,7 @@ async def extract_with_context(chunk_data: Dict[str, str]) -> Dict:
         return {"terms": []}
     
     # 類似文脈を検索
-    related_contexts = await vector_store.search_similar_chunks(chunk_text[:1000], chunk_id, n_results=3)
+    related_contexts = await search_similar_chunks(chunk_text[:1000], chunk_id, n_results=3)
     
     # 関連語ヒントを生成
     synonym_detector = SynonymDetector()
@@ -950,8 +927,11 @@ async def run_pipeline(input_dir: Path, output_json: Path):
     logger.info(f"Total chunks to process: {len(all_chunks)}")
     chunk_ids = [f"chunk_{i}" for i in range(len(all_chunks))]
     
-    await vector_store.initialize(all_chunks, chunk_ids)
-    
+    # 既存のRAGベクトルストアを使用するため、初期化は不要
+    # ドキュメントは既にingestion.pyで処理済みと仮定
+    logger.info(f"Using existing vector store with collection: {cfg.collection_name}")
+    logger.info("Note: Ensure documents are already ingested using ingestion.py")
+
     chunks_with_ids = [{"text": c, "chunk_id": cid} for c, cid in zip(all_chunks, chunk_ids)]
     term_lists = await extract_terms_with_rate_limit(chunks_with_ids)
     

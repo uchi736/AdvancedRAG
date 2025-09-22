@@ -40,7 +40,9 @@
       "Bash(timeout 30 python src/scripts/term_clustering_analyzer.py)",
       "Read(/C:\\work\\RAG\\advancedrag\\src\\scripts/**)",
       "Read(/C:\\work\\RAG\\advancedrag\\src\\scripts/**)",
-      "Read(/C:\\work\\RAG\\advancedrag/**)"
+      "Read(/C:\\work\\RAG\\advancedrag/**)",
+      "Bash(mv:*)",
+      "Bash(rm:*)"
     ],
     "deny": [],
     "ask": []

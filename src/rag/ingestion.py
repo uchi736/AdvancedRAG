@@ -1,7 +1,8 @@
 import json
 from pathlib import Path
 from sqlalchemy import create_engine, text
-from typing import List
+from sqlalchemy.engine import Engine
+from typing import List, Optional
 
 from langchain_community.document_loaders import (
     TextLoader, Docx2txtLoader
@@ -16,11 +17,12 @@ from .document_parser import DocumentParser
 from .pdf_processors import PyMuPDFProcessor, AzureDocumentIntelligenceProcessor
 
 class IngestionHandler:
-    def __init__(self, config, vector_store, text_processor, connection_string):
+    def __init__(self, config, vector_store, text_processor, connection_string, engine: Optional[Engine] = None):
         self.config = config
         self.vector_store = vector_store
         self.text_processor = text_processor
         self.connection_string = connection_string
+        self.engine: Engine = engine or create_engine(connection_string)
         
         # PDF処理方式の選択（後方互換性のため、DocumentParserをデフォルトとして維持）
         pdf_processor_type = getattr(config, 'pdf_processor_type', 'legacy')
@@ -179,7 +181,6 @@ class IngestionHandler:
     def _store_chunks_for_keyword_search(self, chunks: List[Document]):
         if not chunks:
             return
-        eng = create_engine(self.connection_string)
         sql = text("""
             INSERT INTO document_chunks(collection_name, document_id, chunk_id, content, tokenized_content, metadata, created_at) 
             VALUES(:coll_name, :doc_id, :cid, :cont, :tok_cont, :meta, CURRENT_TIMESTAMP) 
@@ -189,7 +190,7 @@ class IngestionHandler:
                 collection_name = EXCLUDED.collection_name, created_at = CURRENT_TIMESTAMP;
         """)
         try:
-            with eng.connect() as conn, conn.begin():
+            with self.engine.connect() as conn, conn.begin():
                 for c in chunks:
                     normalized_content = self.text_processor.normalize_text(c.page_content)
                     tokenized_content = self.text_processor.tokenize(normalized_content) if self.config.enable_japanese_search else ""
@@ -236,9 +237,8 @@ class IngestionHandler:
     def delete_document_by_id(self, doc_id: str) -> tuple[bool, str]:
         if not doc_id: return False, "Document ID cannot be empty."
         
-        engine = create_engine(self.connection_string)
         try:
-            with engine.connect() as conn, conn.begin():
+            with self.engine.connect() as conn, conn.begin():
                 res = conn.execute(
                     text("SELECT chunk_id FROM document_chunks WHERE document_id = :doc_id AND collection_name = :coll"),
                     {"doc_id": doc_id, "coll": self.config.collection_name}
@@ -247,12 +247,12 @@ class IngestionHandler:
 
                 if not chunk_ids:
                     return True, f"No chunks found for document ID '{doc_id}'."
-                
+
                 del_res = conn.execute(
                     text("DELETE FROM document_chunks WHERE document_id = :doc_id AND collection_name = :coll"),
                     {"doc_id": doc_id, "coll": self.config.collection_name}
                 )
-                
+
                 if self.vector_store:
                     self.vector_store.delete(ids=chunk_ids)
 

@@ -1,19 +1,20 @@
 import pandas as pd
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
 from typing import List, Dict, Any, Optional, Tuple
 
 class JargonDictionaryManager:
     """Manages the jargon dictionary in the database."""
     
-    def __init__(self, connection_string: str, table_name: str = "jargon_dictionary"):
+    def __init__(self, connection_string: str, table_name: str = "jargon_dictionary", engine: Optional[Engine] = None):
         self.connection_string = connection_string
         self.table_name = table_name
+        self.engine: Engine = engine or create_engine(connection_string)
         self._init_jargon_table()
     
     def _init_jargon_table(self):
         """Initializes the jargon dictionary table and its indexes."""
-        engine = create_engine(self.connection_string)
-        with engine.connect() as conn:
+        with self.engine.connect() as conn:
             conn.execute(text(f"""
                 CREATE TABLE IF NOT EXISTS {self.table_name} (
                     id SERIAL PRIMARY KEY,
@@ -36,8 +37,7 @@ class JargonDictionaryManager:
                  confidence_score: float = 1.0) -> bool:
         """Adds or updates a term in the dictionary."""
         try:
-            engine = create_engine(self.connection_string)
-            with engine.connect() as conn:
+            with self.engine.connect() as conn:
                 conn.execute(text(f"""
                     INSERT INTO {self.table_name} 
                     (term, definition, domain, aliases, related_terms, confidence_score)
@@ -65,10 +65,9 @@ class JargonDictionaryManager:
         if not terms:
             return {}
         
-        engine = create_engine(self.connection_string)
         results = {}
         try:
-            with engine.connect() as conn:
+            with self.engine.connect() as conn:
                 placeholders = ', '.join([f':term_{i}' for i in range(len(terms))])
                 query = text(f"""
                     SELECT term, definition, domain, aliases, related_terms, confidence_score
@@ -93,8 +92,7 @@ class JargonDictionaryManager:
     def delete_term(self, term: str) -> bool:
         """Deletes a term from the dictionary."""
         try:
-            engine = create_engine(self.connection_string)
-            with engine.connect() as conn:
+            with self.engine.connect() as conn:
                 conn.execute(text(f"DELETE FROM {self.table_name} WHERE term = :term"), {"term": term})
                 conn.commit()
             return True
@@ -102,11 +100,33 @@ class JargonDictionaryManager:
             print(f"Error deleting term from jargon dictionary: {e}")
             return False
 
+    def delete_terms(self, terms: List[str]) -> tuple[int, int]:
+        """Bulk delete multiple terms. Returns (deleted_count, error_count)."""
+        if not terms:
+            return 0, 0
+
+        deleted = 0
+        errors = 0
+        try:
+            with self.engine.connect() as conn, conn.begin():
+                for term in terms:
+                    if not term:
+                        errors += 1
+                        continue
+                    result = conn.execute(
+                        text(f"DELETE FROM {self.table_name} WHERE term = :term"),
+                        {"term": term}
+                    )
+                    deleted += result.rowcount or 0
+        except Exception as e:
+            print(f"Bulk delete error: {e}")
+            return deleted, len(terms) - deleted
+        return deleted, errors
+
     def get_all_terms(self) -> List[Dict[str, Any]]:
         """Retrieves all terms from the dictionary."""
-        engine = create_engine(self.connection_string)
         try:
-            with engine.connect() as conn:
+            with self.engine.connect() as conn:
                 result = conn.execute(text(f"SELECT * FROM {self.table_name} ORDER BY term")).fetchall()
                 return [dict(row._mapping) for row in result]
         except Exception as e:

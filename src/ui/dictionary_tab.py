@@ -113,7 +113,8 @@ def render_dictionary_tab(rag_system):
         for _, row in terms_df.iterrows():
             render_term_card(row)
             if st.button("削除", key=f"delete_card_{row['id']}", use_container_width=True):
-                if jargon_manager.delete_term(row['term']):
+                deleted, errors = rag_system.delete_jargon_terms([row['term']])
+                if deleted:
                     st.success(f"用語「{row['term']}」を削除しました。")
                     get_all_terms_cached.clear()
                     st.rerun()
@@ -153,16 +154,27 @@ def render_dictionary_tab(rag_system):
         terms_to_delete = edited_df[edited_df['削除']]
         if not terms_to_delete.empty:
             if st.button("選択した用語を削除", type="primary"):
-                deleted_count = 0
-                for _, row in terms_to_delete.iterrows():
-                    if jargon_manager.delete_term(row['用語']):
-                        deleted_count += 1
-                st.success(f"{deleted_count}件の用語を削除しました。")
+                terms_list = terms_to_delete['用語'].tolist()
+                deleted_count, error_count = rag_system.delete_jargon_terms(terms_list)
+                if deleted_count:
+                    st.success(f"{deleted_count}件の用語を削除しました。")
+                if error_count:
+                    st.warning(f"{error_count}件の削除に失敗しました。")
                 get_all_terms_cached.clear()
                 st.rerun()
 
     # CSV download
     st.markdown("---")
+    with st.expander("⚠️ 用語辞書を全削除する"):
+        st.warning("この操作は取り消せません。全ての専門用語レコードが削除されます。", icon="⚠️")
+        if st.button("‼️ 全用語を削除", type="secondary"):
+            deleted_count, error_count = rag_system.delete_jargon_terms(terms_df['term'].tolist())
+            if deleted_count:
+                st.success(f"{deleted_count}件の用語を削除しました。")
+            if error_count:
+                st.warning(f"{error_count}件の削除に失敗しました。", icon="⚠️")
+            get_all_terms_cached.clear()
+            st.rerun()
     csv = terms_df.to_csv(index=False)
     st.download_button(
         label="📥 表示中の用語をCSVでダウンロード",

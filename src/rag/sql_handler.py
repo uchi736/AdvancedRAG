@@ -2,16 +2,18 @@ import re
 import pandas as pd
 from pathlib import Path
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
 from typing import List, Dict, Any, Optional, Tuple
 
 from langchain_core.runnables import RunnableSequence
 from langchain_community.callbacks.manager import get_openai_callback
 
 class SQLHandler:
-    def __init__(self, config, llm, connection_string):
+    def __init__(self, config, llm, connection_string, engine: Optional[Engine] = None):
         self.config = config
         self.llm = llm
         self.connection_string = connection_string
+        self.engine: Engine = engine or create_engine(connection_string)
         # Note: Prompts/chains will be passed in or set after initialization
         # to avoid circular dependencies with a potential chains.py module.
         self.single_table_sql_chain: Optional[RunnableSequence] = None
@@ -32,8 +34,7 @@ class SQLHandler:
 
             df.columns = self._normalize_columns(df.columns)
             
-            engine = create_engine(self.connection_string)
-            with engine.connect() as conn:
+            with self.engine.connect() as conn:
                 conn.execute(text(f'DROP TABLE IF EXISTS public."{table_name}" CASCADE'))
                 df.to_sql(table_name, conn, if_exists='replace', index=False, schema='public')
                 conn.commit()
@@ -72,9 +73,8 @@ class SQLHandler:
 
     def get_data_tables(self) -> List[Dict[str, Any]]:
         tables_data = []
-        engine = create_engine(self.connection_string)
         try:
-            with engine.connect() as conn:
+            with self.engine.connect() as conn:
                 res = conn.execute(
                     text("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name LIKE :prefix"),
                     {"prefix": f"{self.config.user_table_prefix}%"}
@@ -96,9 +96,8 @@ class SQLHandler:
     def delete_data_table(self, table_name: str) -> tuple[bool, str]:
         if not table_name or not table_name.startswith(self.config.user_table_prefix):
             return False, f"Invalid table name: {table_name}"
-        engine = create_engine(self.connection_string)
         try:
-            with engine.connect() as conn:
+            with self.engine.connect() as conn:
                 conn.execute(text(f'DROP TABLE IF EXISTS public."{table_name}" CASCADE'))
                 conn.commit()
             return True, f"Table '{table_name}' deleted successfully."
@@ -107,8 +106,7 @@ class SQLHandler:
 
     def _get_table_schema(self, table_name: str) -> str:
         try:
-            engine = create_engine(self.connection_string)
-            with engine.connect() as conn:
+            with self.engine.connect() as conn:
                 cols = conn.execute(text("SELECT column_name, data_type FROM information_schema.columns WHERE table_name = :table AND table_schema = 'public' ORDER BY ordinal_position"), {"table": table_name}).fetchall()
                 if not cols: return f"Table '{table_name}' not found."
 
@@ -125,8 +123,7 @@ class SQLHandler:
         if not generated_sql:
             return {"success": False, "error": "No SQL query provided."}
         try:
-            engine = create_engine(self.connection_string)
-            with engine.connect() as conn:
+            with self.engine.connect() as conn:
                 res = conn.execute(text(generated_sql))
                 rows = res.fetchmany(self.config.max_sql_results)
                 results_df = pd.DataFrame(rows, columns=res.keys())
@@ -164,9 +161,8 @@ class SQLHandler:
         if not document_id:
             return pd.DataFrame()
         
-        engine = create_engine(self.connection_string)
         try:
-            with engine.connect() as conn:
+            with self.engine.connect() as conn:
                 query = text("""
                     SELECT chunk_id, content, tokenized_content, metadata
                     FROM document_chunks 

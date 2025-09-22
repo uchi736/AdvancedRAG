@@ -97,18 +97,34 @@ def create_retrieval_chain(
         jargon_terms = jargon_extraction_chain.invoke({"question": original_question, "max_terms": config_obj.max_jargon_terms_per_query}).split('\n')
         jargon_terms = [t.strip() for t in jargon_terms if t.strip()]
         augmented_query = original_question
+        augmentation_payload = input_dict.get("jargon_augmentation", {})
+
         if jargon_terms:
             jargon_defs = jargon_manager.lookup_terms(jargon_terms)
             if jargon_defs:
                 defs_text = "\n".join([f"- {term}: {info['definition']}" for term, info in jargon_defs.items()])
                 augmented_query = query_augmentation_chain.invoke({"original_question": original_question, "jargon_definitions": defs_text})
-        return {**input_dict, "retrieval_query": augmented_query}
+                augmentation_payload = {
+                    "extracted_terms": jargon_terms,
+                    "matched_terms": list(jargon_defs.keys()),
+                    "augmented_query": augmented_query
+                }
+            else:
+                augmentation_payload = {"extracted_terms": jargon_terms, "matched_terms": [], "augmented_query": original_question}
+
+        updated = {**input_dict, "retrieval_query": augmented_query}
+        if augmentation_payload:
+            updated["jargon_augmentation"] = augmentation_payload
+        return updated
 
     query_expansion_prompt = get_query_expansion_prompt()
     
     def expand_query(input_dict):
         result = (query_expansion_prompt | llm | StrOutputParser()).invoke(input_dict)
         expanded_queries = [q.strip() for q in result.split('\n') if q.strip()]
+        # Ensure the original question is always available for downstream logging/UI.
+        if input_dict.get("question") and input_dict["question"] not in expanded_queries:
+            expanded_queries.insert(0, input_dict["question"])
         return expanded_queries
     
     query_expansion_chain = RunnableLambda(expand_query)
@@ -158,8 +174,16 @@ def create_retrieval_chain(
         try:
             reranked_indices_str = reranking_chain.invoke(rerank_input)
             reranked_indices = [int(i.strip()) for i in reranked_indices_str.split(',') if i.strip().isdigit()]
-            return [docs[i] for i in reranked_indices if i < len(docs)]
+            reranked_docs = [docs[i] for i in reranked_indices if i < len(docs)]
+            if reranked_indices:
+                input_dict["reranking"] = {
+                    "original_order": list(range(len(docs))),
+                    "reranked_order": reranked_indices,
+                    "applied": True
+                }
+            return reranked_docs if reranked_docs else docs
         except Exception:
+            input_dict.setdefault("reranking", {"applied": False})
             return docs
 
     retrieval_and_rerank_chain = (

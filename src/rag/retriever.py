@@ -1,5 +1,6 @@
 import json
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
 from typing import List, Dict, Any, Optional, Tuple
 
 from langchain_community.vectorstores import PGVector
@@ -22,10 +23,13 @@ class JapaneseHybridRetriever(BaseRetriever):
     config_params: Config
     text_processor: JapaneseTextProcessor
     search_type: str = "ハイブリッド検索"
+    engine: Optional[Engine] = None
     
-    def __init__(self, **kwargs):
+    def __init__(self, engine: Optional[Engine] = None, **kwargs):
         super().__init__(**kwargs)
         self.text_processor = JapaneseTextProcessor()
+        # Reuse shared engine when provided to avoid recreating connections.
+        object.__setattr__(self, "engine", engine or create_engine(self.connection_string))
 
     def _vector_search(self, q: str, config: Optional[RunnableConfig] = None) -> List[Tuple[Document, float]]:
         if not self.vector_store: 
@@ -38,14 +42,13 @@ class JapaneseHybridRetriever(BaseRetriever):
 
     def _keyword_search(self, q: str, config: Optional[RunnableConfig] = None) -> List[Tuple[Document, float]]:
         """Performs keyword-based search with Japanese tokenization support."""
-        engine = create_engine(self.connection_string)
         res: List[Tuple[Document, float]] = []
-        
+
         normalized_query = self.text_processor.normalize_text(q)
         is_japanese = self.text_processor.is_japanese(normalized_query)
-        
+
         try:
-            with engine.connect() as conn:
+            with self.engine.connect() as conn:
                 if is_japanese and self.config_params.enable_japanese_search:
                     tokens = self.text_processor.tokenize(normalized_query)
                     if not tokens: return []
@@ -118,16 +121,14 @@ class JapaneseHybridRetriever(BaseRetriever):
             return child_docs
 
         unique_parent_ids = list(set(parent_ids_to_fetch))
-        engine = create_engine(self.connection_string)
-        
         sql = text("""
             SELECT content, metadata 
             FROM document_chunks 
             WHERE chunk_id = ANY(:parent_ids) AND collection_name = :collection_name
         """)
-        
+
         try:
-            with engine.connect() as conn:
+            with self.engine.connect() as conn:
                 db_result = conn.execute(sql, {"parent_ids": unique_parent_ids, "collection_name": self.config_params.collection_name})
                 parent_docs_map = {
                     json.loads(row.metadata).get("chunk_id"): Document(page_content=row.content, metadata=json.loads(row.metadata or "{}"))

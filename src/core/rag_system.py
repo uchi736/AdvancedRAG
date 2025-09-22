@@ -13,6 +13,7 @@ from typing import List, Dict, Any, Optional
 
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
@@ -51,7 +52,10 @@ class RAGSystem:
         self.config = cfg
         self.text_processor = JapaneseTextProcessor()
         self.connection_string = f"postgresql+{_PG_DIALECT}://{cfg.db_user}:{cfg.db_password}@{cfg.db_host}:{cfg.db_port}/{cfg.db_name}"
-        
+
+        # Create a shared SQLAlchemy engine to avoid per-call engine creation downstream.
+        self.engine: Engine = create_engine(self.connection_string, pool_pre_ping=True)
+
         self._init_llms_and_embeddings()
         self._init_db()
 
@@ -66,13 +70,24 @@ class RAGSystem:
         self.retriever = JapaneseHybridRetriever(
             vector_store=self.vector_store,
             connection_string=self.connection_string,
+            engine=self.engine,
             config_params=cfg,
             text_processor=self.text_processor
         )
 
-        self.jargon_manager = JargonDictionaryManager(self.connection_string, cfg.jargon_table_name)
-        self.ingestion_handler = IngestionHandler(cfg, self.vector_store, self.text_processor, self.connection_string)
-        self.sql_handler = SQLHandler(cfg, self.llm, self.connection_string)
+        self.jargon_manager = JargonDictionaryManager(
+            self.connection_string,
+            cfg.jargon_table_name,
+            engine=self.engine
+        )
+        self.ingestion_handler = IngestionHandler(
+            cfg,
+            self.vector_store,
+            self.text_processor,
+            self.connection_string,
+            engine=self.engine
+        )
+        self.sql_handler = SQLHandler(cfg, self.llm, self.connection_string, engine=self.engine)
 
         # Create the modular chains
         self.retrieval_chain = create_retrieval_chain(self.llm, self.retriever, self.jargon_manager, self.config)
@@ -102,8 +117,7 @@ class RAGSystem:
         print("RAGSystem initialized with Azure OpenAI.")
 
     def _init_db(self):
-        engine = create_engine(self.connection_string)
-        with engine.connect() as conn:
+        with self.engine.connect() as conn:
             conn.execute(text("CREATE TABLE IF NOT EXISTS document_chunks (chunk_id TEXT PRIMARY KEY, collection_name TEXT, document_id TEXT, content TEXT, tokenized_content TEXT, metadata JSONB, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_doc_chunks_coll_doc ON document_chunks(collection_name, document_id);"))
             conn.commit()
@@ -127,6 +141,9 @@ class RAGSystem:
     def get_chunks_by_document_id(self, document_id: str):
         return self.sql_handler.get_chunks_by_document_id(document_id)
 
+    def delete_jargon_terms(self, terms: List[str]) -> tuple[int, int]:
+        return self.jargon_manager.delete_terms(terms)
+
     # --- Core Query Logic ---
     def query(self, question: str, *, use_query_expansion: bool = False, use_rag_fusion: bool = False, use_jargon_augmentation: bool = True, use_reranking: bool = True, search_type: str = "ハイブリッド検索", config: Optional[RunnableConfig] = None) -> Dict[str, Any]:
         """Executes the main RAG chain for a standard RAG query."""
@@ -138,11 +155,21 @@ class RAGSystem:
             }
             result = self.rag_chain.invoke(chain_input, config=config)
             usage = {"total_tokens": cb.total_tokens, "cost": cb.total_cost}
+        query_expansion = {}
+        if result.get("expanded_queries"):
+            query_expansion = {"expanded_queries": result["expanded_queries"]}
+
         return {
             "answer": result.get("answer", "回答を生成できませんでした。"), 
             "sources": result.get("documents", []),
             "retrieved_docs": result.get("documents", []),  # 評価システム用に追加
-            "question": question, "usage": usage, "query_expansion": {}, "reranking": {}, "golden_retriever": {}
+            "question": question,
+            "usage": usage,
+            "query_expansion": query_expansion,
+            "reranking": result.get("reranking", {}),
+            "jargon_augmentation": result.get("jargon_augmentation", {}),
+            "retrieval_query": result.get("retrieval_query", question),
+            "golden_retriever": {}
         }
 
     def query_unified(self, question: str, **kwargs) -> Dict[str, Any]:
@@ -184,11 +211,15 @@ class RAGSystem:
         # 3. Synthesize Final Answer
         # If SQL search was not productive, just return the original RAG result.
         if not sql_details or "error" in sql_details:
-             return {
+            return {
                 "answer": rag_results.get("answer", "回答が見つかりませんでした。"),
                 "sources": rag_results.get("documents", []),
                 "question": question,
-                "usage": {"total_tokens": cb_rag.total_tokens, "cost": cb_rag.total_cost}
+                "usage": {"total_tokens": cb_rag.total_tokens, "cost": cb_rag.total_cost},
+                "query_expansion": ({"expanded_queries": rag_results.get("expanded_queries")} if rag_results.get("expanded_queries") else {}),
+                "reranking": rag_results.get("reranking", {}),
+                "jargon_augmentation": rag_results.get("jargon_augmentation", {}),
+                "retrieval_query": rag_results.get("retrieval_query", question)
             }
 
         # Otherwise, synthesize both results
@@ -199,9 +230,17 @@ class RAGSystem:
         total_cost = cb_rag.total_cost + cb_sql_cost + cb_synth.total_cost
         
         return {
-            "answer": final_answer, "sources": rag_results.get("documents", []), "question": question,
-            "query_type": "hybrid", "sql_details": sql_details, "usage": {"total_tokens": total_tokens, "cost": total_cost},
-            "query_expansion": {}, "reranking": {}, "golden_retriever": {}
+            "answer": final_answer,
+            "sources": rag_results.get("documents", []),
+            "question": question,
+            "query_type": "hybrid",
+            "sql_details": sql_details,
+            "usage": {"total_tokens": total_tokens, "cost": total_cost},
+            "query_expansion": ({"expanded_queries": rag_results.get("expanded_queries")} if rag_results.get("expanded_queries") else {}),
+            "reranking": rag_results.get("reranking", {}),
+            "jargon_augmentation": rag_results.get("jargon_augmentation", {}),
+            "retrieval_query": rag_results.get("retrieval_query", question),
+            "golden_retriever": {}
         }
 
     def extract_terms(self, input_dir: str | Path, output_json: str | Path) -> None:
